@@ -27,8 +27,8 @@ bytesToHex :: [Word8] -> String
 bytesToHex = concatMap (\b -> let s = showHex b "" in if length s == 1 then '0':s else s)
 
 -- | Format a valid decoded message
-formatDecodedMessage :: DecodedMessage -> String
-formatDecodedMessage dm =
+formatVerifiedMessage :: VerifiedMessage -> String
+formatVerifiedMessage dm =
     let dfType = show (decodedDF dm)
         icaoHex = showHex (decodedICAO dm) ""
         payload = bytesToHex (decodedPayload dm)
@@ -47,11 +47,11 @@ chunksOf size bs
 -- | Process a single message and convert to output string if valid
 messageToString :: Message -> IcaoCache -> IO (Maybe String, IcaoCache)
 messageToString msg cache = do
-    decodedMsg <- decode msg cache
-    case decodedMsg of
+    verifiedMsg <- verify msg cache
+    case verifiedMsg of
         Just (dm, newCache) -> 
             if decodedParity dm == Valid
-            then return (Just (formatDecodedMessage dm), newCache)
+            then return (Just (formatVerifiedMessage dm), newCache)
             else return (Nothing, newCache)
         Nothing -> return (Nothing, cache)
 

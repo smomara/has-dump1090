@@ -20,7 +20,7 @@ library
     hs-source-dirs:   lib
     exposed-modules:  ModeS
                     , ModeS.Demodulator
-                    , ModeS.Decoder
+                    , ModeS.Verifier
                     , ModeS.Types
 
 executable has-dump1090

@@ -1,7 +1,7 @@
 module ModeS.Types
     ( MessageLength(..)
     , Message(..)
-    , DecodedMessage(..)
+    , VerifiedMessage(..)
     , DownlinkFormat(..)
     , ParityStatus(..)
     ) where
@@ -33,8 +33,8 @@ data DownlinkFormat
 data ParityStatus = Valid | CorrectedError | InvalidChecksum
     deriving (Show, Eq)
 
--- Decoded and validated message
-data DecodedMessage = DecodedMessage
+-- Validated message
+data VerifiedMessage = VerifiedMessage
     { decodedDF :: !DownlinkFormat
     , decodedICAO :: !Word32      -- 24-bit ICAO address
     , decodedParity :: !ParityStatus

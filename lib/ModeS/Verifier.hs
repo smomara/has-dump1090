@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
-module ModeS.Decoder
-    ( decode
+
+module ModeS.Verifier
+    ( verify
     , newIcaoCache
     , IcaoCache(..)
     , icaoCacheTtl
@@ -199,7 +200,7 @@ fixTwoBitsErrors msg bits = go 0 0
              then Just ([i, j], modifiedMsg)
              else go i (j + 1)-- | Brute force ICAO address recovery
 
-bruteForceAp :: Message -> DecodedMessage -> IcaoCache -> IO (Maybe Word32)
+bruteForceAp :: Message -> VerifiedMessage -> IcaoCache -> IO (Maybe Word32)
 bruteForceAp msg dm cache = 
     if dfRequiresBruteForce (decodedDF dm)
     then do
@@ -231,8 +232,8 @@ bruteForceAp msg dm cache =
         ]
 
 -- | Pure decoding function without cache operations
-decodePure :: Message -> Maybe DecodedMessage
-decodePure msg = do
+verifyPure :: Message -> Maybe VerifiedMessage
+verifyPure msg = do
     let bytes = bitsToBytes (msgBits msg)
         numBits = case msgLength msg of
             ShortMessage -> 56
@@ -258,7 +259,7 @@ decodePure msg = do
                         else ([], bytes, initialParity)
             else ([], bytes, initialParity)
 
-    return DecodedMessage
+    return VerifiedMessage
         { decodedDF = df
         , decodedICAO = extractICAO correctedBytes
         , decodedParity = if correctedParity then Valid else InvalidChecksum
@@ -276,7 +277,7 @@ checkCache addr cache = do
             currentTime - storedTime <= fromIntegral (cacheTtl cache)
 
 -- | Update cache with new address
-updateCache :: DecodedMessage -> IcaoCache -> IO IcaoCache
+updateCache :: VerifiedMessage -> IcaoCache -> IO IcaoCache
 updateCache msg cache =
     case decodedDF msg of
         -- Only update cache for DF11 and DF17 with valid parity
@@ -286,7 +287,7 @@ updateCache msg cache =
         _ -> return cache
 
 -- | Try to recover ICAO address using cache
-recoverAddress :: Message -> DecodedMessage -> IcaoCache -> IO (Maybe Word32)
+recoverAddress :: Message -> VerifiedMessage -> IcaoCache -> IO (Maybe Word32)
 recoverAddress msg dm cache = 
     if dfRequiresBruteForce (decodedDF dm)
     then do
@@ -317,21 +318,21 @@ recoverAddress msg dm cache =
         ]
 
 -- | Main decode function that combines pure decoding with cache operations
-decode :: Message -> IcaoCache -> IO (Maybe (DecodedMessage, IcaoCache))
-decode msg cache = case decodePure msg of
+verify :: Message -> IcaoCache -> IO (Maybe (VerifiedMessage, IcaoCache))
+verify msg cache = case verifyPure msg of
     Nothing -> return Nothing
-    Just decodedMsg -> do
+    Just verifiedMsg -> do
         -- Try to recover address if needed
-        finalMsg <- if decodedParity decodedMsg == InvalidChecksum
+        finalMsg <- if decodedParity verifiedMsg == InvalidChecksum
             then do
-                mAddr <- recoverAddress msg decodedMsg cache
+                mAddr <- recoverAddress msg verifiedMsg cache
                 return $ case mAddr of
-                    Just addr -> decodedMsg 
+                    Just addr -> verifiedMsg 
                         { decodedICAO = addr
                         , decodedParity = Valid
                         }
-                    Nothing -> decodedMsg
-            else return decodedMsg
+                    Nothing -> verifiedMsg
+            else return verifiedMsg
         
         -- Update cache if needed
         newCache <- updateCache finalMsg cache
