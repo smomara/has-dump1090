@@ -1,9 +1,9 @@
 module Main where
+
 import qualified Data.ByteString as BS
-import qualified Data.Vector.Unboxed as V
 import Data.Word (Word8)
-import Data.Bits (shiftR, (.&.))
 import Numeric (showHex)
+import Control.Monad (foldM)
 import ModeS
 
 -- | Constants matching the test case
@@ -22,48 +22,17 @@ shortMsgBits = 56
 fullLen :: Int
 fullLen = preambleUs + longMsgBits
 
--- | Convert a list of bits to a hex string
-bitsToHex :: [Bool] -> String
-bitsToHex bits =
-    let bytes = chunksOf 8 bits
-        byteToInt :: [Bool] -> Int
-        byteToInt byte = sum $ zipWith (\b p -> if b then 2^p else 0) 
-                                      (reverse byte) 
-                                      [0..7]
-        toHexStr n = if n < 16 
-                    then '0' : showHex n "" 
-                    else showHex n ""
-    in concatMap (toHexStr . byteToInt) bytes
-  where
-    chunksOf _ [] = []
-    chunksOf n xs = take n xs : chunksOf n (drop n xs)
-
 -- | Convert bytes to hex string
 bytesToHex :: [Word8] -> String
 bytesToHex = concatMap (\b -> let s = showHex b "" in if length s == 1 then '0':s else s)
 
--- | Process a single message and convert to hex string
-messageToHex :: Message -> String
-messageToHex msg =
-    let firstByte = take 8 (msgBits msg)
-        -- Extract just the DF (first 5 bits) from the first byte
-        df :: Word8
-        df = fromIntegral $ (byteToInt firstByte `shiftR` 3) 
-        msgLen = getMsgLenBits df `div` 8
-        bits = take (msgLen * 8) (msgBits msg)
-    in bitsToHex bits
-  where
-    byteToInt :: [Bool] -> Int
-    byteToInt byte = sum $ zipWith (\b p -> if b then 2^p else 0) 
-                                  (reverse byte) 
-                                  [0..7]
-
--- | Calculate message length in bits based on message type
-getMsgLenBits :: Word8 -> Int
-getMsgLenBits msgtype = 
-    if (msgtype .&. 0x10) /= 0 
-    then longMsgBits  -- DF >= 16 (long message)
-    else shortMsgBits -- DF <= 15 (short message)
+-- | Format a valid decoded message
+formatDecodedMessage :: DecodedMessage -> String
+formatDecodedMessage dm =
+    let dfType = show (decodedDF dm)
+        icaoHex = showHex (decodedICAO dm) ""
+        payload = bytesToHex (decodedPayload dm)
+    in payload ++ " [" ++ dfType ++ " ICAO:" ++ icaoHex ++ "]"
 
 -- | Split ByteString into chunks of specified size
 chunksOf :: Int -> BS.ByteString -> [BS.ByteString]
@@ -75,42 +44,46 @@ chunksOf size bs
            then chunk : chunksOf size rest
            else []
 
--- | Process a single message and convert to output string
-messageToString :: Message -> String
-messageToString msg =
-    let originalHex = messageToHex msg
-        decodedMsg = decode msg
-        msgDetails = case decodedMsg of
-            Just dm -> 
-                let dfType = show (decodedDF dm)
-                    icaoHex = showHex (decodedICAO dm) ""
-                    crcStatus = case decodedParity dm of
-                        Valid -> "CRC OK"
-                        InvalidChecksum -> "CRC FAIL"
-                        CorrectedError -> "CRC CORRECTED"
-                    finalHex = bytesToHex (decodedPayload dm)
-                    details = if originalHex /= finalHex
-                             then " (Corrected: " ++ finalHex ++ ")"
-                             else ""
-                in originalHex ++ " [" ++ dfType ++ " ICAO:" ++ icaoHex ++ 
-                   "] " ++ crcStatus ++ details
-            Nothing -> originalHex ++ " INVALID DF"
-    in msgDetails
+-- | Process a single message and convert to output string if valid
+messageToString :: Message -> IcaoCache -> IO (Maybe String, IcaoCache)
+messageToString msg cache = do
+    decodedMsg <- decode msg cache
+    case decodedMsg of
+        Just (dm, newCache) -> 
+            if decodedParity dm == Valid
+            then return (Just (formatDecodedMessage dm), newCache)
+            else return (Nothing, newCache)
+        Nothing -> return (Nothing, cache)
 
 -- | Process a chunk of ByteString data
-processChunk :: BS.ByteString -> [String]
-processChunk chunk =
+processChunk :: BS.ByteString -> IcaoCache -> IO ([String], IcaoCache)
+processChunk chunk cache = do
     let messages = process chunk
-    in map messageToString messages
+    foldM processMessage ([], cache) messages
+  where
+    processMessage (outputs, currentCache) msg = do
+        (mOutput, newCache) <- messageToString msg currentCache
+        case mOutput of
+            Just output -> return (outputs ++ [output], newCache)
+            Nothing -> return (outputs, newCache)
 
 main :: IO ()
 main = do
+    -- Create initial ICAO cache
+    let initialCache = newIcaoCache icaoCacheLen icaoCacheTtl
+    
     -- Read the binary file
     contents <- BS.readFile "fixture.bin"
     
     -- Process the file in chunks
     let chunks = chunksOf dataLen contents
-        messages = concatMap processChunk chunks
     
-    -- Print all messages
-    mapM_ putStrLn messages
+    -- Process all chunks while maintaining cache state
+    (validMessages, _) <- foldM processChunks ([], initialCache) chunks
+    
+    -- Print all valid messages
+    mapM_ putStrLn validMessages
+  where
+    processChunks (outputs, cache) chunk = do
+        (newOutputs, newCache) <- processChunk chunk cache
+        return (outputs ++ newOutputs, newCache)

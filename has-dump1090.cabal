@@ -13,6 +13,7 @@ common shared-properties
                     , rtlsdr
                     , bytestring
                     , vector
+                    , time
     
 library
     import:           shared-properties

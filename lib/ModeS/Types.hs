@@ -19,15 +19,15 @@ data Message = Message
 
 -- Represents the different downlink format types
 data DownlinkFormat
-    = DFShortAirAir        -- DF 0
-    | DFSurveillanceAlt    -- DF 4
-    | DFSurveillanceId     -- DF 5
-    | DFAllCallReply       -- DF 11
-    | DFLongAirAir         -- DF 16
-    | DFExtendedSquitter   -- DF 17
-    | DFCommAAltRequest    -- DF 20
-    | DFCommAIdRequest     -- DF 21
-    | DFCommCELM           -- DF 24
+    = DFShortAirSurveillance    -- DF 0
+    | DFSurveillanceAlt         -- DF 4
+    | DFSurveillanceId          -- DF 5
+    | DFAllCallReply            -- DF 11
+    | DFLongAirAir              -- DF 16
+    | DFExtendedSquitter        -- DF 17
+    | DFCommAAltRequest         -- DF 20
+    | DFCommAIdRequest          -- DF 21
+    | DFCommCELM                -- DF 24
     deriving (Show, Eq)
 
 data ParityStatus = Valid | CorrectedError | InvalidChecksum
