@@ -25,10 +25,9 @@ data DownlinkFormat
     | DFAllCallReply       -- DF 11
     | DFLongAirAir         -- DF 16
     | DFExtendedSquitter   -- DF 17
-    | DFTCASResolution     -- DF 16
-    | DFMilitary           -- DF 19
-    | DFCommBResponse      -- DF 20,21
-    | DFCommDResponse      -- DF 24
+    | DFCommAAltRequest    -- DF 20
+    | DFCommAIdRequest     -- DF 21
+    | DFCommCELM           -- DF 24
     deriving (Show, Eq)
 
 data ParityStatus = Valid | CorrectedError | InvalidChecksum

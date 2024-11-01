@@ -18,8 +18,9 @@ library
     import:           shared-properties
     hs-source-dirs:   lib
     exposed-modules:  ModeS
-                   ,  ModeS.Demodulator
-                   ,  ModeS.Types
+                    , ModeS.Demodulator
+                    , ModeS.Decoder
+                    , ModeS.Types
 
 executable has-dump1090
     import:           shared-properties

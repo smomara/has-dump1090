@@ -1,5 +1,4 @@
 module Main where
-
 import qualified Data.ByteString as BS
 import qualified Data.Vector.Unboxed as V
 import Data.Word (Word8)
@@ -39,7 +38,11 @@ bitsToHex bits =
     chunksOf _ [] = []
     chunksOf n xs = take n xs : chunksOf n (drop n xs)
 
--- | Process a single message and convert it to hex string
+-- | Convert bytes to hex string
+bytesToHex :: [Word8] -> String
+bytesToHex = concatMap (\b -> let s = showHex b "" in if length s == 1 then '0':s else s)
+
+-- | Process a single message and convert to hex string
 messageToHex :: Message -> String
 messageToHex msg =
     let firstByte = take 8 (msgBits msg)
@@ -62,12 +65,6 @@ getMsgLenBits msgtype =
     then longMsgBits  -- DF >= 16 (long message)
     else shortMsgBits -- DF <= 15 (short message)
 
--- | Process a chunk of ByteString data
-processChunk :: BS.ByteString -> [String]
-processChunk chunk =
-    let messages = process chunk
-    in map messageToHex messages
-
 -- | Split ByteString into chunks of specified size
 chunksOf :: Int -> BS.ByteString -> [BS.ByteString]
 chunksOf size bs
@@ -77,6 +74,34 @@ chunksOf size bs
         in if BS.length chunk == size
            then chunk : chunksOf size rest
            else []
+
+-- | Process a single message and convert to output string
+messageToString :: Message -> String
+messageToString msg =
+    let originalHex = messageToHex msg
+        decodedMsg = decode msg
+        msgDetails = case decodedMsg of
+            Just dm -> 
+                let dfType = show (decodedDF dm)
+                    icaoHex = showHex (decodedICAO dm) ""
+                    crcStatus = case decodedParity dm of
+                        Valid -> "CRC OK"
+                        InvalidChecksum -> "CRC FAIL"
+                        CorrectedError -> "CRC CORRECTED"
+                    finalHex = bytesToHex (decodedPayload dm)
+                    details = if originalHex /= finalHex
+                             then " (Corrected: " ++ finalHex ++ ")"
+                             else ""
+                in originalHex ++ " [" ++ dfType ++ " ICAO:" ++ icaoHex ++ 
+                   "] " ++ crcStatus ++ details
+            Nothing -> originalHex ++ " INVALID DF"
+    in msgDetails
+
+-- | Process a chunk of ByteString data
+processChunk :: BS.ByteString -> [String]
+processChunk chunk =
+    let messages = process chunk
+    in map messageToString messages
 
 main :: IO ()
 main = do
