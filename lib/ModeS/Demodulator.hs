@@ -2,7 +2,6 @@
 
 module ModeS.Demodulator
     ( process
-    , Message (..)
     ) where
 
 import qualified Data.ByteString as BS
@@ -10,6 +9,7 @@ import qualified Data.ByteString.Unsafe as BSU
 import qualified Data.Vector.Unboxed as V
 import Data.Word (Word8, Word16)
 import Data.Bits (shiftR)
+import ModeS.Types (Message(..), MessageLength(..))
 
 -- | Constants
 longMsgBits :: Int
@@ -20,18 +20,6 @@ shortMsgBits = 56
 
 preambleUs :: Int
 preambleUs = 8
-
--- | Message types
-data MessageLength =
-    ShortMessage |
-    LongMessage
-    deriving (Show, Eq)
-
--- | Represents a decoded Mode S message
-data Message = Message
-    { msgLength :: !MessageLength
-    , msgBits :: [Bool]
-    } deriving (Show, Eq)
 
 -- | Convert raw I/Q samples into magnitude vector
 computeMagnitudeVector :: BS.ByteString -> V.Vector Word16
