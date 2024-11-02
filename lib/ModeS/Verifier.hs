@@ -202,9 +202,9 @@ fixTwoBitsErrors msg bits = go 0 0
 
 bruteForceAp :: Message -> VerifiedMessage -> IcaoCache -> IO (Maybe Word32)
 bruteForceAp msg dm cache = 
-    if dfRequiresBruteForce (decodedDF dm)
+    if dfRequiresBruteForce (verifiedDF dm)
     then do
-        let bytes = decodedPayload dm
+        let bytes = verifiedPayload dm
             msgBits = case msgLength msg of
                 ShortMessage -> 56
                 LongMessage -> 112
@@ -260,10 +260,10 @@ verifyPure msg = do
             else ([], bytes, initialParity)
 
     return VerifiedMessage
-        { decodedDF = df
-        , decodedICAO = extractICAO correctedBytes
-        , decodedParity = if correctedParity then Valid else InvalidChecksum
-        , decodedPayload = correctedBytes
+        { verifiedDF = df
+        , verifiedICAO = extractICAO correctedBytes
+        , verifiedParity = if correctedParity then Valid else InvalidChecksum
+        , verifiedPayload = correctedBytes
         }
 
 -- | Check if address exists in cache
@@ -279,19 +279,19 @@ checkCache addr cache = do
 -- | Update cache with new address
 updateCache :: VerifiedMessage -> IcaoCache -> IO IcaoCache
 updateCache msg cache =
-    case decodedDF msg of
+    case verifiedDF msg of
         -- Only update cache for DF11 and DF17 with valid parity
         df | df `elem` [DFAllCallReply, DFExtendedSquitter] && 
-             decodedParity msg == Valid ->
-            addRecentlySeenIcaoAddr (decodedICAO msg) cache
+             verifiedParity msg == Valid ->
+            addRecentlySeenIcaoAddr (verifiedICAO msg) cache
         _ -> return cache
 
 -- | Try to recover ICAO address using cache
 recoverAddress :: Message -> VerifiedMessage -> IcaoCache -> IO (Maybe Word32)
 recoverAddress msg dm cache = 
-    if dfRequiresBruteForce (decodedDF dm)
+    if dfRequiresBruteForce (verifiedDF dm)
     then do
-        let bytes = decodedPayload dm
+        let bytes = verifiedPayload dm
             msgBits = case msgLength msg of
                 ShortMessage -> 56
                 LongMessage -> 112
@@ -323,13 +323,13 @@ verify msg cache = case verifyPure msg of
     Nothing -> return Nothing
     Just verifiedMsg -> do
         -- Try to recover address if needed
-        finalMsg <- if decodedParity verifiedMsg == InvalidChecksum
+        finalMsg <- if verifiedParity verifiedMsg == InvalidChecksum
             then do
                 mAddr <- recoverAddress msg verifiedMsg cache
                 return $ case mAddr of
                     Just addr -> verifiedMsg 
-                        { decodedICAO = addr
-                        , decodedParity = Valid
+                        { verifiedICAO = addr
+                        , verifiedParity = Valid
                         }
                     Nothing -> verifiedMsg
             else return verifiedMsg

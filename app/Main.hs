@@ -1,3 +1,5 @@
+{-# LANGUAGE RecordWildCards #-}
+
 module Main where
 
 import qualified Data.ByteString as BS
@@ -26,13 +28,63 @@ fullLen = preambleUs + longMsgBits
 bytesToHex :: [Word8] -> String
 bytesToHex = concatMap (\b -> let s = showHex b "" in if length s == 1 then '0':s else s)
 
--- | Format a valid decoded message
+-- | Format a decoded message
+formatDecodedMessage :: DecodedMessage -> String
+formatDecodedMessage dm = 
+    let basicInfo = [ "DF=" ++ show (decodedDF dm)
+                   , "ICAO=" ++ showHex (decodedICAO dm) ""
+                   , "CA=" ++ show (decodedCapability dm)
+                   ]
+        
+        flightStatus = maybe [] (\fs -> ["Status=" ++ show fs]) (decodedFlightStatus dm)
+        identity = maybe [] (\id -> ["Squawk=" ++ show id]) (decodedIdentity dm)
+        altitudeInfo = maybe [] (\alt -> ["Alt=" ++ show alt ++ "ft"]) (decodedAltitude dm)
+        ground = maybe [] (\g -> ["Ground=" ++ show g]) (decodedGroundBit dm)
+        
+        esInfo = case decodedExtSquitter dm of
+            Just esType -> case esType of
+                ESAircraftIdentification{..} -> 
+                    ["Flight=" ++ flightNumber, "Type=" ++ show aircraftType]
+                    
+                ESSurfacePosition{..} -> 
+                    [ "Lat=" ++ show (latitude position)
+                    , "Lon=" ++ show (longitude position)
+                    , "Speed=" ++ show groundSpeed ++ "kt"
+                    , "Track=" ++ show groundTrack ++ "°"
+                    ]
+                    
+                ESAirbornePosition{..} -> 
+                    [ "Lat=" ++ show (latitude position)
+                    , "Lon=" ++ show (longitude position)
+                    , "PosAlt=" ++ show (altitude position) ++ "ft"
+                    ] ++ maybe [] (\vr -> ["VRate=" ++ show vr ++ "ft/min"]) posVerticalRate
+                    
+                ESAirborneVelocity{..} ->
+                    [ "Type=" ++ show velocityType
+                    , "Speed=" ++ show speed ++ "kt"
+                    , "VRate=" ++ show velVerticalRate ++ "ft/min"
+                    , "Heading=" ++ show heading ++ "°"
+                    , "SpeedType=" ++ (if speedType then "Ground" else "Air")
+                    ]
+                    
+                ESOperationalStatus{..} ->
+                    ["Status=" ++ show aircraftStatus, "Capabilities=" ++ show capabilities]
+                    
+                ESUnknownType{..} ->
+                    ["ME=" ++ show meType, "Subtype=" ++ show meSubtype]
+                    
+            Nothing -> []
+            
+    in "{" ++ unwords (basicInfo ++ flightStatus ++ identity ++ altitudeInfo ++ ground ++ esInfo) ++ "}"
+
+-- | Format a valid verified message with decoded info
 formatVerifiedMessage :: VerifiedMessage -> String
-formatVerifiedMessage dm =
-    let dfType = show (decodedDF dm)
-        icaoHex = showHex (decodedICAO dm) ""
-        payload = bytesToHex (decodedPayload dm)
-    in payload ++ " [" ++ dfType ++ " ICAO:" ++ icaoHex ++ "]"
+formatVerifiedMessage vm =
+    let dfType = show (verifiedDF vm)
+        icaoHex = showHex (verifiedICAO vm) ""
+        payload = bytesToHex (verifiedPayload vm)
+        decoded = formatDecodedMessage (decode vm)
+    in payload ++ " [" ++ dfType ++ " ICAO:" ++ icaoHex ++ "] " ++ decoded
 
 -- | Split ByteString into chunks of specified size
 chunksOf :: Int -> BS.ByteString -> [BS.ByteString]
@@ -50,7 +102,7 @@ messageToString msg cache = do
     verifiedMsg <- verify msg cache
     case verifiedMsg of
         Just (dm, newCache) -> 
-            if decodedParity dm == Valid
+            if verifiedParity dm == Valid
             then return (Just (formatVerifiedMessage dm), newCache)
             else return (Nothing, newCache)
         Nothing -> return (Nothing, cache)

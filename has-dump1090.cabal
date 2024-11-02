@@ -21,6 +21,7 @@ library
     exposed-modules:  ModeS
                     , ModeS.Demodulator
                     , ModeS.Verifier
+                    , ModeS.Decoder
                     , ModeS.Types
 
 executable has-dump1090

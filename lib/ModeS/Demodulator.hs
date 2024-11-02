@@ -164,4 +164,3 @@ detectMessages mags = go 0 []
 -- | Main processing function
 process :: BS.ByteString -> [Message]
 process = detectMessages . computeMagnitudeVector
-
