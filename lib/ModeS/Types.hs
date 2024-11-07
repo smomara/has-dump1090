@@ -1,160 +1,160 @@
 {-# LANGUAGE LambdaCase #-}
 
-module ModeS.Types
-    ( MessageLength(..)
-    , Message(..)
-    , VerifiedMessage(..)
-    , DecodedMessage(..)
-    , DownlinkFormat(..)
-    , ParityStatus(..)
-    , TransponderCapability(..)
-    , ExtendedSquitterType(..)
-    , AircraftType(..)
-    , AltitudeType(..)
-    , VelocityType(..)
-    , Position(..)
-    , FlightStatus(..)
-    , AircraftStatus(..)
-    , fromCA
-    ) where
+module ModeS.Types where
 
 import Data.Word
 import Data.Int
 
+-- | Basic message length enum
 data MessageLength = ShortMessage | LongMessage
     deriving (Show, Eq)
 
--- Raw demodulated message
+-- | Raw demodulated message before any verification
 data Message = Message
     { msgLength :: !MessageLength
     , msgBits :: [Bool]
     } deriving (Show, Eq)
 
-data ParityStatus = Valid | CorrectedError | InvalidChecksum
+-- | Message parity/CRC status
+data ParityStatus 
+    = Valid 
+    | InvalidChecksum
     deriving (Show, Eq)
 
--- Represents the different downlink format types
+-- | Different downlink format types
 data DownlinkFormat
-    = DFShortAirSurveillance    -- DF 0
-    | DFSurveillanceAlt         -- DF 4
-    | DFSurveillanceId          -- DF 5
-    | DFAllCallReply            -- DF 11
-    | DFLongAirAir              -- DF 16
-    | DFExtendedSquitter        -- DF 17
-    | DFCommAAltRequest         -- DF 20
-    | DFCommAIdRequest          -- DF 21
-    | DFCommCELM                -- DF 24
+    = DFShortAirSurveillance   -- DF 0
+    | DFSurveillanceAlt        -- DF 4  
+    | DFSurveillanceId         -- DF 5
+    | DFAllCallReply           -- DF 11
+    | DFLongAirAir             -- DF 16  
+    | DFExtendedSquitter       -- DF 17
+    | DFCommAAltRequest        -- DF 20
+    | DFCommAIdRequest         -- DF 21
+    | DFCommCELM               -- DF 24
     deriving (Show, Eq)
 
--- Validated message
+-- | Message with verified CRC and extracted ICAO
 data VerifiedMessage = VerifiedMessage
-    { verifiedDF :: !DownlinkFormat
-    , verifiedICAO :: !Word32      -- 24-bit ICAO address
-    , verifiedParity :: !ParityStatus
-    , verifiedPayload :: ![Word8]  -- Decoded payload bytes
+    { verifiedDF :: !DownlinkFormat     -- Downlink Format
+    , verifiedICAO :: !Word32           -- 24-bit ICAO address
+    , verifiedParity :: !ParityStatus   -- CRC/Parity check result
+    , verifiedPayload :: ![Word8]       -- Raw payload bytes
     } deriving (Show, Eq)
 
--- Aircraft Types for DF17
-data AircraftType
-    = Reserved
-    | SurfaceEmergencyVehicle
-    | SurfaceServiceVehicle
-    | GroundObstruction
-    | AircraftD  -- Set D
-    | AircraftC  -- Set C
-    | AircraftB  -- Set B
-    | AircraftA  -- Set A
+-- | Aircraft altitude units
+data AltitudeUnit = Feet | Meters
     deriving (Show, Eq)
 
--- Altitude types
-data AltitudeType
-    = BarometricAlt
-    | GeometricAlt
-    deriving (Show, Eq)
-
--- Velocity types
-data VelocityType
-    = GroundSpeedSubsonic  -- Subsonic (<0.5 Mach)
-    | GroundSpeedSupersonic -- Supersonic (>0.5 Mach)
-    | AirspeedSubsonic
-    | AirspeedSupersonic
-    deriving (Show, Eq)
-
--- Position information
-data Position = Position
-    { latitude :: !Double        -- Latitude in degrees
-    , longitude :: !Double       -- Longitude in degrees
-    , altitude :: !Int          -- Altitude in feet
-    , altType :: !AltitudeType  -- Type of altitude measurement
-    , isValid :: !Bool          -- Position validity flag
+-- | Altitude with units
+data Altitude = Altitude
+    { altValue :: !Int
+    , altUnit :: !AltitudeUnit
     } deriving (Show, Eq)
 
--- Flight status
+-- | Geographic coordinates
+data Coordinates = Coordinates
+    { latitude :: !Double
+    , longitude :: !Double
+    } deriving (Show, Eq)
+
+-- | Raw CPR coordinates before decoding
+data RawCPRCoordinates = RawCPRCoordinates
+    { rawLatitude :: !Int  
+    , rawLongitude :: !Int
+    } deriving (Show, Eq)
+
+-- | Aircraft velocity components
+data Velocity = Velocity
+    { groundSpeed :: !Int -- In knots
+    , track :: !Int      -- In degrees
+    , verticalRate :: !Int -- In feet/minute
+    } deriving (Show, Eq) 
+
+-- | Vertical rate info
+data VerticalRate = VerticalRate
+    { vertRateSource :: !Bool -- True = Barometric, False = Geometric
+    , vertRateSign :: !Bool   -- True = Up, False = Down
+    , vertRateValue :: !Int   -- Actual rate value
+    } deriving (Show, Eq)
+
+-- | Flight status for DF4,5,20,21 
 data FlightStatus
     = NormalAirborne
-    | NormalGround
+    | NormalGround  
     | AlertAirborne
     | AlertGround
-    | AlertSPI           -- Special Position Identification
-    | SPIOnly
-    | StatusReserved1
-    | StatusReserved2
+    | AlertSPI      -- Alert & Special Position Identification
+    | SPIOnly       -- Special Position Identification only
+    | Reserved6     -- Value 6 not assigned
+    | Reserved7     -- Value 7 not assigned
     deriving (Show, Eq)
 
--- Aircraft emergency/priority status
-data AircraftStatus
-    = NoEmergency
-    | GeneralEmergency
-    | MedicalEmergency
-    | MinimumFuel
-    | NoCommunications
-    | UnlawfulInterference
-    | DownedAircraft
-    deriving (Show, Eq)
-
--- Extended squitter message types (DF17)
-data ExtendedSquitterType
-    = ESAircraftIdentification
-        { aircraftType :: !AircraftType
-        , flightNumber :: !String
-        }
-    | ESSurfacePosition
-        { position :: !Position
-        , groundSpeed :: !Int     -- in knots
-        , groundTrack :: !Int     -- in degrees
-        }
-    | ESAirbornePosition
-        { position :: !Position
-        , posVerticalRate :: !(Maybe Int) -- feet/minute
-        }
-    | ESAirborneVelocity
-        { velocityType :: !VelocityType
-        , speed :: !Int           -- in knots
-        , velVerticalRate :: !Int    -- in feet/minute
-        , heading :: !Int         -- in degrees
-        , speedType :: !Bool      -- True = Ground Speed, False = Airspeed
-        }
-    | ESOperationalStatus
-        { aircraftStatus :: !AircraftStatus
-        , capabilities :: ![String]
-        }
-    | ESUnknownType
-        { meType :: !Word8
-        , meSubtype :: !Word8
-        }
-    deriving (Show, Eq)
-
--- Transponder capability
+-- | Transponder capability levels
 data TransponderCapability
-    = Level1               -- CA = 0
-    | Level2              -- CA = 1
-    | Level3              -- CA = 2
-    | Level4              -- CA = 3
-    | Level2PlusGround    -- CA = 4
-    | Level2PlusAirborne  -- CA = 5
-    | Level2PlusAny       -- CA = 6
-    | Level7              -- CA = 7
+    = Level1              -- CA = 0 (Surveillance Only) 
+    | Level2              -- CA = 1 (DF0,4,5,11)
+    | Level3              -- CA = 2 (DF0,4,5,11,20,21)
+    | Level4              -- CA = 3 (DF0,4,5,11,20,21,24)
+    | Level2PlusGround    -- CA = 4 (DF0,4,5,11,20,21,24,code7 - ground)
+    | Level2PlusAirborne  -- CA = 5 (DF0,4,5,11,20,21,24,code7 - airborne)
+    | Level2PlusAny       -- CA = 6 (DF0,4,5,11,20,21,24,code7)
+    | Level7              -- CA = 7 (Unknown)
     deriving (Show, Eq)
+
+-- | Extended squitter message types
+data ExtendedSquitterType
+    = AircraftID        -- ME Type 1-4  
+    | SurfacePos        -- ME Type 5-8
+    | AirbornePos       -- ME Type 9-18
+    | AirborneVel       -- ME Type 19
+    | Reserved          -- Other types
+    deriving (Show, Eq)
+
+-- | Aircraft identification info from ME Type 1-4
+data AircraftIdentification = AircraftIdentification
+    { aircraftType :: !Int      -- 0-3 corresponding to type A-D
+    , flightNumber :: !String   -- 8 char flight number
+    } deriving (Show, Eq)
+
+-- | Common fields shared between downlink formats  
+data CommonFields = CommonFields
+    { icaoAddress :: !Word32
+    , altitude :: Maybe Altitude
+    , identity :: Maybe Int  -- 13-bit squawk code
+    } deriving (Show, Eq)
+
+-- | Extended squitter specific fields
+data ExtendedSquitterData
+    = ESAircraftID !AircraftIdentification
+    | ESAirbornePos !RawCPRCoordinates !Altitude
+    | ESAirborneVel !Velocity
+    | ESSurfacePos !RawCPRCoordinates
+    deriving (Show, Eq)
+
+-- | Format-specific fields 
+data MessageSpecific
+    = DF11Fields
+        { capability :: !TransponderCapability
+        }
+    | DF17Fields  
+        { esType :: !ExtendedSquitterType
+        , esData :: !ExtendedSquitterData
+        }
+    | DF45Fields
+        { flightStatus :: !FlightStatus
+        , downlinkRequest :: !Int
+        }
+    deriving (Show, Eq)
+
+-- | Final decoded message with all fields interpreted
+data DecodedMessage = DecodedMessage
+    { msgFormat :: !DownlinkFormat
+    , msgCommon :: !CommonFields
+    , msgSpecific :: Maybe MessageSpecific
+    } deriving (Show, Eq)
+
+-- Helper functions
 
 fromCA :: Word8 -> Maybe TransponderCapability
 fromCA = \case
@@ -168,16 +168,14 @@ fromCA = \case
     7 -> Just Level7
     _ -> Nothing
 
--- Fully decoded message
-data DecodedMessage = DecodedMessage
-    { decodedDF :: !DownlinkFormat
-    , decodedICAO :: !Word32
-    , decodedCapability :: !TransponderCapability
-    -- Common fields
-    , decodedFlightStatus :: !(Maybe FlightStatus)
-    , decodedIdentity :: !(Maybe Int)        -- Squawk code
-    , decodedAltitude :: !(Maybe Int)        -- in feet
-    , decodedGroundBit :: !(Maybe Bool)      -- True = on ground
-    -- Extended Squitter specific
-    , decodedExtSquitter :: !(Maybe ExtendedSquitterType)
-    } deriving (Show, Eq)
+fromFS :: Word8 -> Maybe FlightStatus  
+fromFS = \case
+    0 -> Just NormalAirborne
+    1 -> Just NormalGround
+    2 -> Just AlertAirborne 
+    3 -> Just AlertGround
+    4 -> Just AlertSPI
+    5 -> Just SPIOnly
+    6 -> Just Reserved6
+    7 -> Just Reserved7
+    _ -> Nothing

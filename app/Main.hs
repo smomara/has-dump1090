@@ -1,4 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Main where
 
@@ -30,52 +31,61 @@ bytesToHex = concatMap (\b -> let s = showHex b "" in if length s == 1 then '0':
 
 -- | Format a decoded message
 formatDecodedMessage :: DecodedMessage -> String
-formatDecodedMessage dm = 
-    let basicInfo = [ "DF=" ++ show (decodedDF dm)
-                   , "ICAO=" ++ showHex (decodedICAO dm) ""
-                   , "CA=" ++ show (decodedCapability dm)
-                   ]
+formatDecodedMessage DecodedMessage{..} =
+    let CommonFields{..} = msgCommon
         
-        flightStatus = maybe [] (\fs -> ["Status=" ++ show fs]) (decodedFlightStatus dm)
-        identity = maybe [] (\id -> ["Squawk=" ++ show id]) (decodedIdentity dm)
-        altitudeInfo = maybe [] (\alt -> ["Alt=" ++ show alt ++ "ft"]) (decodedAltitude dm)
-        ground = maybe [] (\g -> ["Ground=" ++ show g]) (decodedGroundBit dm)
+        basicInfo = ["DF=" ++ show msgFormat, 
+                    "ICAO=" ++ showHex icaoAddress ""]
         
-        esInfo = case decodedExtSquitter dm of
-            Just esType -> case esType of
-                ESAircraftIdentification{..} -> 
-                    ["Flight=" ++ flightNumber, "Type=" ++ show aircraftType]
-                    
-                ESSurfacePosition{..} -> 
-                    [ "Lat=" ++ show (latitude position)
-                    , "Lon=" ++ show (longitude position)
-                    , "Speed=" ++ show groundSpeed ++ "kt"
-                    , "Track=" ++ show groundTrack ++ "°"
-                    ]
-                    
-                ESAirbornePosition{..} -> 
-                    [ "Lat=" ++ show (latitude position)
-                    , "Lon=" ++ show (longitude position)
-                    , "PosAlt=" ++ show (altitude position) ++ "ft"
-                    ] ++ maybe [] (\vr -> ["VRate=" ++ show vr ++ "ft/min"]) posVerticalRate
-                    
-                ESAirborneVelocity{..} ->
-                    [ "Type=" ++ show velocityType
-                    , "Speed=" ++ show speed ++ "kt"
-                    , "VRate=" ++ show velVerticalRate ++ "ft/min"
-                    , "Heading=" ++ show heading ++ "°"
-                    , "SpeedType=" ++ (if speedType then "Ground" else "Air")
-                    ]
-                    
-                ESOperationalStatus{..} ->
-                    ["Status=" ++ show aircraftStatus, "Capabilities=" ++ show capabilities]
-                    
-                ESUnknownType{..} ->
-                    ["ME=" ++ show meType, "Subtype=" ++ show meSubtype]
-                    
-            Nothing -> []
+        altitudeInfo = maybe [] 
+            (\alt -> ["Alt=" ++ show (altValue alt) ++ 
+                     case altUnit alt of 
+                         Feet -> "ft"
+                         Meters -> "m"]) 
+            altitude
             
-    in "{" ++ unwords (basicInfo ++ flightStatus ++ identity ++ altitudeInfo ++ ground ++ esInfo) ++ "}"
+        identityInfo = maybe [] 
+            (\id -> ["Squawk=" ++ show id]) 
+            identity
+            
+        specificInfo = maybe [] formatSpecific msgSpecific
+        
+    in "{" ++ unwords (basicInfo ++ altitudeInfo ++ identityInfo ++ specificInfo) ++ "}"
+    where
+        formatSpecific :: MessageSpecific -> [String]
+        formatSpecific = \case
+            DF11Fields{..} ->
+                ["CA=" ++ show capability]
+                
+            DF17Fields{..} ->
+                ["Type=" ++ show esType] ++ formatESData esData
+                
+            DF45Fields{..} ->
+                ["Status=" ++ show flightStatus,
+                 "DR=" ++ show downlinkRequest]
+
+        formatESData :: ExtendedSquitterData -> [String]
+        formatESData = \case
+            ESAircraftID ident ->
+                ["Flight=" ++ flightNumber ident,
+                 "AcType=" ++ show (aircraftType ident)]
+                
+            ESAirbornePos cpr alt ->
+                ["Lat=" ++ show (fromIntegral $ rawLatitude cpr),
+                 "Lon=" ++ show (fromIntegral $ rawLongitude cpr),
+                 "Alt=" ++ show (altValue alt) ++ 
+                    case altUnit alt of
+                        Feet -> "ft"
+                        Meters -> "m"]
+                        
+            ESAirborneVel vel ->
+                ["Speed=" ++ show (groundSpeed vel) ++ "kt",
+                 "Track=" ++ show (track vel) ++ "°",
+                 "VRate=" ++ show (verticalRate vel) ++ "ft/min"]
+                 
+            ESSurfacePos cpr ->
+                ["Lat=" ++ show (fromIntegral $ rawLatitude cpr),
+                 "Lon=" ++ show (fromIntegral $ rawLongitude cpr)]
 
 -- | Format a valid verified message with decoded info
 formatVerifiedMessage :: VerifiedMessage -> String

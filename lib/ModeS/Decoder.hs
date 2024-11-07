@@ -1,148 +1,98 @@
-{-# LANGUAGE RecordWildCards #-}
-
-module ModeS.Decoder
-    ( decode
-    ) where
+module ModeS.Decoder where
 
 import ModeS.Types
-import Data.Bits
 import Data.Word
-import Data.Maybe (fromMaybe)
+import Data.Bits
 
--- Main decoder function
+-- | Main decoder function for Mode S messages
 decode :: VerifiedMessage -> DecodedMessage
-decode VerifiedMessage{..} = 
-    let baseMsg = DecodedMessage
-            { decodedDF = verifiedDF
-            , decodedICAO = verifiedICAO
-            , decodedCapability = fromMaybe Level1 $ fromCA (verifiedPayload !! 0 .&. 0x7)
-            , decodedFlightStatus = Nothing
-            , decodedIdentity = Nothing
-            , decodedAltitude = Nothing
-            , decodedGroundBit = Nothing
-            , decodedExtSquitter = Nothing
-            }
-    in case verifiedDF of
-        DFShortAirSurveillance -> 
-            baseMsg { decodedAltitude = decodeAltitude verifiedPayload }
-            
-        DFSurveillanceAlt ->
-            baseMsg 
-                { decodedAltitude = decodeAltitude verifiedPayload
-                , decodedFlightStatus = Just $ decodeFlightStatus (verifiedPayload !! 0)
+decode msg = DecodedMessage
+    { msgFormat = verifiedDF msg
+    , msgCommon = decodeCommonFields msg
+    , msgSpecific = Nothing -- TODO
+    }
+
+-- | Decode the common fields from a verified Mode S message
+decodeCommonFields :: VerifiedMessage -> CommonFields
+decodeCommonFields msg@VerifiedMessage{verifiedICAO = icao} = CommonFields
+    { icaoAddress = icao
+    , altitude = decodeAltitude msg
+    , identity = decodeIdentity msg
+    }
+
+-- | Decode altitude if this message type contains it
+decodeAltitude :: VerifiedMessage -> Maybe Altitude
+decodeAltitude msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload} =
+    case df of
+        -- DF 0, 4, 16, 20 contain 13-bit altitude
+        df | df `elem` [DFShortAirSurveillance, DFSurveillanceAlt, 
+                       DFLongAirAir, DFCommAAltRequest] ->
+            Just $ decodeAC13Field payload
+
+        -- For DF17, only decode altitude for airborne position messages (ME type 9-18)
+        DFExtendedSquitter -> 
+            let meType = payload !! 4 `shiftR` 3
+            in if meType >= 9 && meType <= 18
+               then Just $ decodeAC12Field payload
+               else Nothing
+
+        _ -> Nothing
+
+-- | Decode 13-bit AC altitude field (in DF 0,4,16,20)
+decodeAC13Field :: [Word8] -> Altitude
+decodeAC13Field payload = 
+    let mBit = testBit (payload !! 3) 6  -- M bit at bit 6
+        qBit = testBit (payload !! 3) 4  -- Q bit at bit 4
+    in if not mBit && qBit 
+       then -- Standard altitude coding
+            let n = ((fromIntegral (payload !! 2) .&. 0x1F) `shiftL` 6) .|.
+                    ((fromIntegral (payload !! 3) .&. 0x80) `shiftR` 2) .|.
+                    ((fromIntegral (payload !! 3) .&. 0x20) `shiftR` 1) .|.
+                    (fromIntegral (payload !! 3) .&. 0x0F)
+            in Altitude 
+                { altValue = n * 25 - 1000  -- Each unit = 25ft, -1000ft offset
+                , altUnit = Feet
                 }
-            
-        DFSurveillanceId ->
-            baseMsg
-                { decodedFlightStatus = Just $ decodeFlightStatus (verifiedPayload !! 0)
-                , decodedIdentity = Just $ decodeIdentity verifiedPayload
+       else -- Not implemented: Metric altitude or special coding
+            Altitude 
+                { altValue = 0
+                , altUnit = Feet
                 }
-            
-        DFExtendedSquitter ->
-            baseMsg 
-                { decodedExtSquitter = Just $ decodeExtendedSquitter verifiedPayload
+
+-- | Decode 12-bit AC altitude field (in DF17)
+decodeAC12Field :: [Word8] -> Altitude  
+decodeAC12Field payload =
+    let qBit = testBit (payload !! 5) 0   -- Q bit is LSB of byte 5
+    in if qBit
+       then -- Standard altitude coding
+            let n = ((fromIntegral (payload !! 5) `shiftR` 1) `shiftL` 4) .|.
+                    ((fromIntegral (payload !! 6) .&. 0xF0) `shiftR` 4)
+            in Altitude
+                { altValue = n * 25 - 1000  -- Each unit = 25ft, -1000ft offset
+                , altUnit = Feet
                 }
-            
-        _ -> baseMsg
+       else -- Not implemented: Special coding
+            Altitude 
+                { altValue = 0
+                , altUnit = Feet 
+                }
 
--- Decode altitude field (13-bit encoding)
-decodeAltitude :: [Word8] -> Maybe Int
-decodeAltitude payload =
-    let mBit = testBit (payload !! 3) 6
-        qBit = testBit (payload !! 3) 4
-    in if not mBit && qBit
-       then 
-           let n = ((fromIntegral (payload !! 2) .&. 31) `shiftL` 6) .|.
-                   ((fromIntegral (payload !! 3) .&. 0x80) `shiftR` 2) .|.
-                   ((fromIntegral (payload !! 3) .&. 0x20) `shiftR` 1) .|.
-                   (fromIntegral (payload !! 3) .&. 15)
-           in Just $ n * 25 - 1000
-       else Nothing
-
--- Decode Mode A identity/squawk code
-decodeIdentity :: [Word8] -> Int
-decodeIdentity payload =
-    let a = ((fromIntegral (payload !! 3) .&. 0x80) `shiftR` 5) .|.
-            ((fromIntegral (payload !! 2) .&. 0x02) `shiftR` 0) .|.
-            ((fromIntegral (payload !! 2) .&. 0x08) `shiftR` 3)
-        b = ((fromIntegral (payload !! 3) .&. 0x02) `shiftL` 1) .|.
-            ((fromIntegral (payload !! 3) .&. 0x08) `shiftR` 2) .|.
-            ((fromIntegral (payload !! 3) .&. 0x20) `shiftR` 5)
-        c = ((fromIntegral (payload !! 2) .&. 0x01) `shiftL` 2) .|.
-            ((fromIntegral (payload !! 2) .&. 0x04) `shiftR` 1) .|.
-            ((fromIntegral (payload !! 2) .&. 0x10) `shiftR` 4)
-        d = ((fromIntegral (payload !! 3) .&. 0x01) `shiftL` 2) .|.
-            ((fromIntegral (payload !! 3) .&. 0x04) `shiftR` 1) .|.
-            ((fromIntegral (payload !! 3) .&. 0x10) `shiftR` 4)
-    in a * 1000 + b * 100 + c * 10 + d
-
--- Decode flight status field
-decodeFlightStatus :: Word8 -> FlightStatus
-decodeFlightStatus w = case w .&. 0x7 of
-    0 -> NormalAirborne
-    1 -> NormalGround
-    2 -> AlertAirborne
-    3 -> AlertGround
-    4 -> AlertSPI
-    5 -> SPIOnly
-    6 -> StatusReserved1
-    7 -> StatusReserved2
-    _ -> NormalAirborne
-
--- Decode extended squitter messages (DF17)
-decodeExtendedSquitter :: [Word8] -> ExtendedSquitterType
-decodeExtendedSquitter payload =
-    let meType = payload !! 4 `shiftR` 3
-        meSub = payload !! 4 .&. 0x7
-    in case meType of
-        1 -> decodeAircraftIdentification AircraftD payload
-        2 -> decodeAircraftIdentification AircraftC payload
-        3 -> decodeAircraftIdentification AircraftB payload
-        4 -> decodeAircraftIdentification AircraftA payload
-        
-        5  -> decodeSurfacePosition payload
-        6  -> decodeSurfacePosition payload
-        7  -> decodeSurfacePosition payload
-        8  -> decodeSurfacePosition payload
-        
-        9  -> decodeAirbornePosition payload
-        10 -> decodeAirbornePosition payload
-        11 -> decodeAirbornePosition payload
-        12 -> decodeAirbornePosition payload
-        13 -> decodeAirbornePosition payload
-        14 -> decodeAirbornePosition payload
-        15 -> decodeAirbornePosition payload
-        16 -> decodeAirbornePosition payload
-        17 -> decodeAirbornePosition payload
-        18 -> decodeAirbornePosition payload
-        
-        19 | meSub >= 1 && meSub <= 4 -> decodeAirborneVelocity payload meSub
-        
-        28 | meSub == 1 -> decodeOperationalStatus payload
-        
-        _ -> ESUnknownType meType meSub
-
--- Decode aircraft identification message (placeholder)
-decodeAircraftIdentification :: AircraftType -> [Word8] -> ExtendedSquitterType
-decodeAircraftIdentification acType _ = ESAircraftIdentification acType "UNKNOWN"
-
--- Decode surface position message (placeholder)
-decodeSurfacePosition :: [Word8] -> ExtendedSquitterType
-decodeSurfacePosition _ =
-    let pos = Position 0 0 0 BarometricAlt False
-    in ESSurfacePosition pos 0 0
-
--- Decode airborne position message (placeholder) 
-decodeAirbornePosition :: [Word8] -> ExtendedSquitterType
-decodeAirbornePosition _ =
-    let pos = Position 0 0 0 BarometricAlt False
-    in ESAirbornePosition pos Nothing
-
--- Decode airborne velocity message (placeholder)
-decodeAirborneVelocity :: [Word8] -> Word8 -> ExtendedSquitterType
-decodeAirborneVelocity _ _ =
-    ESAirborneVelocity GroundSpeedSubsonic 0 0 0 True
-
--- Decode aircraft operational status (placeholder)
-decodeOperationalStatus :: [Word8] -> ExtendedSquitterType
-decodeOperationalStatus _ = ESOperationalStatus NoEmergency []
+-- | Decode identity/squawk code if present (in DF 4,5,20,21)
+decodeIdentity :: VerifiedMessage -> Maybe Int
+decodeIdentity msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload}
+    | df `elem` [DFSurveillanceAlt, DFSurveillanceId, 
+                 DFCommAAltRequest, DFCommAIdRequest] =
+        Just $ let a = ((fromIntegral (payload !! 3) .&. 0x80) `shiftR` 5) .|.
+                       ((fromIntegral (payload !! 2) .&. 0x02) `shiftR` 0) .|. 
+                       ((fromIntegral (payload !! 2) .&. 0x08) `shiftR` 3)
+                   b = ((fromIntegral (payload !! 3) .&. 0x02) `shiftL` 1) .|.
+                       ((fromIntegral (payload !! 3) .&. 0x08) `shiftR` 2) .|.
+                       ((fromIntegral (payload !! 3) .&. 0x20) `shiftR` 5)
+                   c = ((fromIntegral (payload !! 2) .&. 0x01) `shiftL` 2) .|.
+                       ((fromIntegral (payload !! 2) .&. 0x04) `shiftR` 1) .|.
+                       ((fromIntegral (payload !! 2) .&. 0x10) `shiftR` 4)
+                   d = ((fromIntegral (payload !! 3) .&. 0x01) `shiftL` 2) .|.
+                       ((fromIntegral (payload !! 3) .&. 0x04) `shiftR` 1) .|.
+                       ((fromIntegral (payload !! 3) .&. 0x10) `shiftR` 4)
+               in a * 1000 + b * 100 + c * 10 + d
+    | otherwise = Nothing
