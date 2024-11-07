@@ -111,9 +111,31 @@ data ExtendedSquitterType
     | Reserved          -- Other types
     deriving (Show, Eq)
 
+-- | Aircraft category based on TC and CA values
+data AircraftCategory 
+    = NoCategory
+    | EmergencyVehicle 
+    | ServiceVehicle
+    | GroundObstruction
+    | Glider
+    | LighterThanAir 
+    | Parachutist
+    | Ultralight
+    | UAV
+    | SpaceVehicle
+    | LightAircraft       -- < 7000 kg
+    | MediumAircraft1    -- 7000-34000 kg
+    | MediumAircraft2    -- 34000-136000 kg
+    | HighVortex
+    | HeavyAircraft      -- > 136000 kg
+    | HighPerformance    -- >5g and >400kt
+    | Rotorcraft
+    | ReservedAircraft
+    deriving (Show, Eq)
+
 -- | Aircraft identification info from ME Type 1-4
 data AircraftIdentification = AircraftIdentification
-    { aircraftType :: !Int      -- 0-3 corresponding to type A-D
+    { aircraftCategory :: !AircraftCategory -- Category from TC/CA
     , flightNumber :: !String   -- 8 char flight number
     } deriving (Show, Eq)
 

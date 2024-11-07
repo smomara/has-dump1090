@@ -3,13 +3,14 @@ module ModeS.Decoder where
 import ModeS.Types
 import Data.Word
 import Data.Bits
+import Data.Char (chr)
 
 -- | Main decoder function for Mode S messages
 decode :: VerifiedMessage -> DecodedMessage
 decode msg = DecodedMessage
     { msgFormat = verifiedDF msg
     , msgCommon = decodeCommonFields msg
-    , msgSpecific = Nothing -- TODO
+    , msgSpecific = decodeSpecificFields msg
     }
 
 -- | Decode the common fields from a verified Mode S message
@@ -96,3 +97,85 @@ decodeIdentity msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload}
                        ((fromIntegral (payload !! 3) .&. 0x10) `shiftR` 4)
                in a * 1000 + b * 100 + c * 10 + d
     | otherwise = Nothing
+
+-- | Decode format-specific fields based on message type
+decodeSpecificFields :: VerifiedMessage -> Maybe MessageSpecific
+decodeSpecificFields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload} = 
+    case df of
+        DFExtendedSquitter ->
+            let meType = payload !! 4 `shiftR` 3
+            in if meType >= 1 && meType <= 4
+               then Just $ DF17Fields
+                    { esType = AircraftID
+                    , esData = ESAircraftID $ decodeAircraftIdentification payload
+                    }
+               else Nothing  -- Handle other DF17 types later
+        _ -> Nothing  -- Handle other DFs later
+
+-- | Determine aircraft category from TC and CA values
+decodeCategory :: Word8 -> Word8 -> AircraftCategory
+decodeCategory tc ca = case (tc, ca) of
+    (2, 1) -> EmergencyVehicle
+    (2, 2) -> ServiceVehicle
+    (2, 3) -> ServiceVehicle
+    (2, _) -> GroundObstruction
+    (3, 1) -> Glider
+    (3, 2) -> LighterThanAir
+    (3, 3) -> Parachutist
+    (3, 4) -> Ultralight
+    (3, 6) -> UAV
+    (3, 7) -> SpaceVehicle
+    (4, 1) -> LightAircraft
+    (4, 2) -> MediumAircraft1
+    (4, 3) -> MediumAircraft2
+    (4, 4) -> HighVortex
+    (4, 5) -> HeavyAircraft
+    (4, 6) -> HighPerformance
+    (4, 7) -> Rotorcraft
+    (_, 0) -> NoCategory
+    _      -> ReservedAircraft
+
+-- | Extract the ME field from payload for DF17
+getMEField :: [Word8] -> [Word8]
+getMEField payload = take 7 $ drop 4 payload
+
+-- | Decode aircraft identification from ME field bytes
+decodeAircraftIdentification :: [Word8] -> AircraftIdentification
+decodeAircraftIdentification payload = 
+    let meField = getMEField payload
+        -- Get TC and CA from first byte of ME field
+        tc = meField !! 0 `shiftR` 3         -- First 5 bits (TC)
+        ca = meField !! 0 .&. 0x07           -- Last 3 bits (CA)
+        
+        -- Extract 6-bit characters starting from second byte
+        -- Each character is 6 bits, aligned to byte boundaries
+        c1 = fromIntegral $ (meField !! 1 `shiftR` 2) .&. 0x3F
+        c2 = fromIntegral $ ((meField !! 1 .&. 0x03) `shiftL` 4) .|.
+                           ((meField !! 2 `shiftR` 4) .&. 0x0F)
+        c3 = fromIntegral $ ((meField !! 2 .&. 0x0F) `shiftL` 2) .|.
+                           ((meField !! 3 `shiftR` 6) .&. 0x03)
+        c4 = fromIntegral $ meField !! 3 .&. 0x3F
+        c5 = fromIntegral $ (meField !! 4 `shiftR` 2) .&. 0x3F
+        c6 = fromIntegral $ ((meField !! 4 .&. 0x03) `shiftL` 4) .|.
+                           ((meField !! 5 `shiftR` 4) .&. 0x0F)
+        c7 = fromIntegral $ ((meField !! 5 .&. 0x0F) `shiftL` 2) .|.
+                           ((meField !! 6 `shiftR` 6) .&. 0x03)
+        c8 = fromIntegral $ meField !! 6 .&. 0x3F
+
+        -- Convert to string using exact mapping:
+        -- A-Z : 1-26
+        -- 0-9 : 48-57  
+        -- Space: 32
+        decodeChar :: Word8 -> Char
+        decodeChar n
+            | n >= 1 && n <= 26  = chr (fromIntegral n + 64)    -- A-Z: 1-26 maps to 65-90
+            | n >= 48 && n <= 57 = chr (fromIntegral n)         -- 0-9: 48-57 maps directly
+            | n == 32  = ' '                                     -- Space
+            | otherwise = ' '
+
+        callsign = reverse . dropWhile (== ' ') . reverse $ 
+                  map decodeChar [c1, c2, c3, c4, c5, c6, c7, c8]
+    in AircraftIdentification
+        { aircraftCategory = decodeCategory tc ca
+        , flightNumber = callsign
+        }
