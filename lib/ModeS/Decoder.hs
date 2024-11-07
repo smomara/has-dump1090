@@ -110,6 +110,11 @@ decodeSpecificFields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payl
                         { esType = AircraftID
                         , esData = ESAircraftID $ decodeAircraftIdentification payload
                         }
+                t | t >= 5 && t <= 8 ->
+                    Just $ DF17Fields
+                        { esType = SurfacePos
+                        , esData = ESSurfacePos $ decodeSurfacePosition payload
+                        }
                 t | t >= 9 && t <= 18 ->
                     Just $ DF17Fields
                         {esType = AirbornePos
@@ -206,15 +211,69 @@ decodeCPRCoordinates payload =
         , rawLongitude = fromIntegral rawLon
         }
 
--- | Decode airborne position with format flags
-decodeAirbornePosition :: [Word8] -> AirbornePosition
-decodeAirbornePosition payload = 
+-- | Create base Position from ME field bytes
+decodePosition :: [Word8] -> Position
+decodePosition payload = 
     let coords = decodeCPRCoordinates payload
+        meField = getMEField payload
         -- Extract odd/even flag (F) and UTC flag (T)
-        f = testBit (payload !! 6) 2  -- F bit (odd/even) at bit 2 of byte 6
-        t = testBit (payload !! 6) 3  -- T bit (UTC sync) at bit 3 of byte 6
-    in AirbornePosition
-        { coordinates = coords
-        , isOddFormat = f       -- True = Odd frame, False = Even frame
-        , isUTCSync = t         -- UTC timing status
+        f = testBit (meField !! 2) 2  -- F bit (odd/even) at bit 2 
+        t = testBit (meField !! 2) 3  -- T bit (UTC sync) at bit 3
+    in Position
+        { posCoordinates = coords
+        , posOddFormat = f      -- True = Odd frame, False = Even frame
+        , posUTCSync = t        -- UTC timing status
+        }
+
+-- | Decode airborne position (now just uses base position)
+decodeAirbornePosition :: [Word8] -> AirbornePosition
+decodeAirbornePosition = decodePosition
+
+-- | Decode surface movement field
+decodeSurfaceMovement :: Word8 -> Word8 -> SurfaceMovement
+decodeSurfaceMovement movByte trkByte =
+    let mov = fromIntegral $ movByte .&. 0x7F
+        speed = case mov of
+            0 -> 0       -- Not available
+            1 -> 0       -- Stopped
+            n | n <= 8 -> fromIntegral (n - 1) * 0.125  -- 0.125 kt steps
+            n | n <= 12 -> 1 + fromIntegral (n - 9) * 0.25  -- 0.25 kt steps
+            n | n <= 38 -> 2 + fromIntegral (n - 13) * 0.5  -- 0.5 kt steps
+            n | n <= 93 -> 15 + fromIntegral (n - 39)  -- 1 kt steps
+            n | n <= 108 -> 70 + fromIntegral (n - 94) * 2  -- 2 kt steps
+            n | n <= 123 -> 100 + fromIntegral (n - 109) * 5  -- 5 kt steps
+            124 -> 175   -- >= 175 kt
+            _ -> 0       -- Reserved
+
+        trkValid = testBit trkByte 7  -- Status bit for track
+        trkRaw = fromIntegral $ trkByte .&. 0x7F :: Float
+        track = trkRaw * (360.0 / 128.0)  -- Convert to degrees
+
+    in SurfaceMovement
+        { surfaceSpeed = round speed
+        , surfaceTrack = track
+        , surfaceTrackValid = trkValid
+        }
+
+-- | Decode surface position from ME field bytes
+decodeSurfacePosition :: [Word8] -> SurfacePosition
+decodeSurfacePosition payload = 
+    let meField = getMEField payload
+
+        -- Get Movement from bits 6-12 (7 bits)
+        movValue = ((fromIntegral (meField !! 0) .&. 0x07) `shiftL` 4) .|.
+                  ((fromIntegral (meField !! 1) `shiftR` 4) .&. 0x0F)
+        
+        -- Get ground track value from bits 14-20 (7 bits)
+        trackByte = ((fromIntegral (meField !! 1) .&. 0x0F) `shiftL` 4) .|.
+                   ((fromIntegral (meField !! 2) `shiftR` 4) .&. 0x0F)
+
+        mov = decodeSurfaceMovement movValue trackByte
+
+        -- Get base position
+        pos = decodePosition payload
+
+    in SurfacePosition
+        { surfacePosition = pos
+        , surfaceMovement = mov
         }

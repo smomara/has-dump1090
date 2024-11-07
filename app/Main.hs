@@ -93,30 +93,41 @@ formatDecodedMessage DecodedMessage{..} =
                 ["Status=" ++ show flightStatus,
                  "DR=" ++ show downlinkRequest]
 
+        formatPosition :: Position -> [String]
+        formatPosition pos =
+            ["Lat=" ++ show (fromIntegral $ rawLatitude $ posCoordinates pos),
+             "Lon=" ++ show (fromIntegral $ rawLongitude $ posCoordinates pos),
+             "OddFormat=" ++ show (posOddFormat pos),
+             "UTC=" ++ show (posUTCSync pos)]
+
+        formatSurfaceMovement :: SurfaceMovement -> [String]
+        formatSurfaceMovement mov =
+            ["Speed=" ++ show (surfaceSpeed mov) ++ "kt",
+             "Track=" ++ if surfaceTrackValid mov 
+                        then show (surfaceTrack mov) ++ "°"
+                        else "invalid"]
+
         formatESData :: ExtendedSquitterData -> [String]
         formatESData = \case
             ESAircraftID ident ->
                 ["Flight=" ++ flightNumber ident,
                  "Category=" ++ show (aircraftCategory ident)]
-
+                 
             ESAirbornePos pos alt ->
-               ["Lat=" ++ show (fromIntegral $ rawLatitude $ coordinates pos),
-                 "Lon=" ++ show (fromIntegral $ rawLongitude $ coordinates pos),
-                 "Alt=" ++ show (altValue alt) ++ 
+                formatPosition pos ++
+                ["Alt=" ++ show (altValue alt) ++ 
                     case altUnit alt of
                         Feet -> "ft"
-                        Meters -> "m",
-                 "OddFormat=" ++ show (isOddFormat pos),
-                 "UTC=" ++ show (isUTCSync pos)]
-
+                        Meters -> "m"]
+                        
+            ESSurfacePos SurfacePosition{..} ->
+                formatPosition surfacePosition ++
+                formatSurfaceMovement surfaceMovement
+                
             ESAirborneVel vel ->
                 ["Speed=" ++ show (groundSpeed vel) ++ "kt",
                  "Track=" ++ show (track vel) ++ "°",
                  "VRate=" ++ show (verticalRate vel) ++ "ft/min"]
-                 
-            ESSurfacePos cpr ->
-                ["Lat=" ++ show (fromIntegral $ rawLatitude cpr),
-                 "Lon=" ++ show (fromIntegral $ rawLongitude cpr)]
 
 -- | Format a valid verified message with decoded info
 formatVerifiedMessage :: VerifiedMessage -> String
@@ -163,7 +174,8 @@ processChunk chunk cache = do
 main :: IO ()
 main = do
     -- Process test messages
-    let testMessages = ["8D4840D6202CC371C32CE0576098"]
+    let testMessages = [ "8D4840D6202CC371C32CE0576098"
+                       , "8C4841753A9A153237AEF0F275BE"]
     putStrLn "Processing test messages:"
     mapM_ processTestMessage testMessages
     putStrLn ""

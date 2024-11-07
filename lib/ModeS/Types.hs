@@ -66,7 +66,7 @@ data RawCPRCoordinates = RawCPRCoordinates
 -- | Aircraft velocity components
 data Velocity = Velocity
     { groundSpeed :: !Int -- In knots
-    , track :: !Int      -- In degrees
+    , track :: !Float      -- In degrees
     , verticalRate :: !Int -- In feet/minute
     } deriving (Show, Eq) 
 
@@ -145,19 +145,35 @@ data CommonFields = CommonFields
     , identity :: Maybe Int  -- 13-bit squawk code
     } deriving (Show, Eq)
 
--- | Airborne position extends raw coordinates with format flags
-data AirbornePosition = AirbornePosition
-    { coordinates :: !RawCPRCoordinates  -- Base CPR coordinates
-    , isOddFormat :: !Bool     -- F bit: True = Odd frame, False = Even frame
-    , isUTCSync :: !Bool       -- T bit: UTC timing status
+-- | Surface movement data
+data SurfaceMovement = SurfaceMovement
+    { surfaceSpeed :: !Int        -- Encoded movement value
+    , surfaceTrack :: !Float        -- Ground track in degrees
+    , surfaceTrackValid :: !Bool  -- Whether ground track is valid
     } deriving (Show, Eq)
+
+-- | Common position data shared between surface and airborne positions
+data Position = Position
+    { posCoordinates :: !RawCPRCoordinates  -- Base CPR coordinates
+    , posOddFormat :: !Bool     -- F bit: True = Odd frame, False = Even frame
+    , posUTCSync :: !Bool       -- T bit: UTC timing status
+    } deriving (Show, Eq)
+
+-- | Surface position adds movement data to base position
+data SurfacePosition = SurfacePosition
+    { surfacePosition :: !Position          -- Base position data
+    , surfaceMovement :: !SurfaceMovement  -- Movement and track info
+    } deriving (Show, Eq)
+
+-- | Airborne position is just the base position
+type AirbornePosition = Position
 
 -- | Extended squitter specific fields
 data ExtendedSquitterData
     = ESAircraftID !AircraftIdentification
+    | ESSurfacePos !SurfacePosition
     | ESAirbornePos !AirbornePosition !Altitude
     | ESAirborneVel !Velocity
-    | ESSurfacePos !RawCPRCoordinates
     deriving (Show, Eq)
 
 -- | Format-specific fields 
