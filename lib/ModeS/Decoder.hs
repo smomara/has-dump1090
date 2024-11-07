@@ -104,12 +104,20 @@ decodeSpecificFields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payl
     case df of
         DFExtendedSquitter ->
             let meType = payload !! 4 `shiftR` 3
-            in if meType >= 1 && meType <= 4
-               then Just $ DF17Fields
-                    { esType = AircraftID
-                    , esData = ESAircraftID $ decodeAircraftIdentification payload
-                    }
-               else Nothing  -- Handle other DF17 types later
+            in case meType of
+                t | t >= 1 && t <= 4 ->
+                    Just $ DF17Fields
+                        { esType = AircraftID
+                        , esData = ESAircraftID $ decodeAircraftIdentification payload
+                        }
+                t | t >= 9 && t <= 18 ->
+                    Just $ DF17Fields
+                        {esType = AirbornePos
+                        , esData = ESAirbornePos
+                            (decodeAirbornePosition payload)
+                            (decodeAC12Field payload)
+                        }
+                _ -> Nothing -- Handle other types of DF17
         _ -> Nothing  -- Handle other DFs later
 
 -- | Determine aircraft category from TC and CA values
@@ -178,4 +186,35 @@ decodeAircraftIdentification payload =
     in AircraftIdentification
         { aircraftCategory = decodeCategory tc ca
         , flightNumber = callsign
+        }
+
+-- | Extract raw latitude and longitude from ME field bytes
+decodeCPRCoordinates :: [Word8] -> RawCPRCoordinates
+decodeCPRCoordinates payload = 
+    let -- Extract 17 bits each for lat/lon directly matching C implementation
+        rawLat :: Word32
+        rawLat = ((fromIntegral (payload !! 6) .&. 0x03) `shiftL` 15) .|.
+                 (fromIntegral (payload !! 7) `shiftL` 7) .|.
+                 (fromIntegral (payload !! 8) `shiftR` 1)
+
+        rawLon :: Word32
+        rawLon = ((fromIntegral (payload !! 8) .&. 0x01) `shiftL` 16) .|.
+                 (fromIntegral (payload !! 9) `shiftL` 8) .|.
+                 fromIntegral (payload !! 10)
+    in RawCPRCoordinates
+        { rawLatitude = fromIntegral rawLat
+        , rawLongitude = fromIntegral rawLon
+        }
+
+-- | Decode airborne position with format flags
+decodeAirbornePosition :: [Word8] -> AirbornePosition
+decodeAirbornePosition payload = 
+    let coords = decodeCPRCoordinates payload
+        -- Extract odd/even flag (F) and UTC flag (T)
+        f = testBit (payload !! 6) 2  -- F bit (odd/even) at bit 2 of byte 6
+        t = testBit (payload !! 6) 3  -- T bit (UTC sync) at bit 3 of byte 6
+    in AirbornePosition
+        { coordinates = coords
+        , isOddFormat = f       -- True = Odd frame, False = Even frame
+        , isUTCSync = t         -- UTC timing status
         }

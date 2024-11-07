@@ -3,7 +3,6 @@
 module ModeS.Types where
 
 import Data.Word
-import Data.Int
 
 -- | Basic message length enum
 data MessageLength = ShortMessage | LongMessage
@@ -146,10 +145,17 @@ data CommonFields = CommonFields
     , identity :: Maybe Int  -- 13-bit squawk code
     } deriving (Show, Eq)
 
+-- | Airborne position extends raw coordinates with format flags
+data AirbornePosition = AirbornePosition
+    { coordinates :: !RawCPRCoordinates  -- Base CPR coordinates
+    , isOddFormat :: !Bool     -- F bit: True = Odd frame, False = Even frame
+    , isUTCSync :: !Bool       -- T bit: UTC timing status
+    } deriving (Show, Eq)
+
 -- | Extended squitter specific fields
 data ExtendedSquitterData
     = ESAircraftID !AircraftIdentification
-    | ESAirbornePos !RawCPRCoordinates !Altitude
+    | ESAirbornePos !AirbornePosition !Altitude
     | ESAirborneVel !Velocity
     | ESSurfacePos !RawCPRCoordinates
     deriving (Show, Eq)

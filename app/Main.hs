@@ -98,15 +98,17 @@ formatDecodedMessage DecodedMessage{..} =
             ESAircraftID ident ->
                 ["Flight=" ++ flightNumber ident,
                  "Category=" ++ show (aircraftCategory ident)]
-                
-            ESAirbornePos cpr alt ->
-                ["Lat=" ++ show (fromIntegral $ rawLatitude cpr),
-                 "Lon=" ++ show (fromIntegral $ rawLongitude cpr),
+
+            ESAirbornePos pos alt ->
+               ["Lat=" ++ show (fromIntegral $ rawLatitude $ coordinates pos),
+                 "Lon=" ++ show (fromIntegral $ rawLongitude $ coordinates pos),
                  "Alt=" ++ show (altValue alt) ++ 
                     case altUnit alt of
                         Feet -> "ft"
-                        Meters -> "m"]
-                        
+                        Meters -> "m",
+                 "OddFormat=" ++ show (isOddFormat pos),
+                 "UTC=" ++ show (isUTCSync pos)]
+
             ESAirborneVel vel ->
                 ["Speed=" ++ show (groundSpeed vel) ++ "kt",
                  "Track=" ++ show (track vel) ++ "°",
