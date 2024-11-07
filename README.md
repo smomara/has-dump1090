@@ -21,14 +21,12 @@ has-dump1090 decodes Mode-S messages from aircraft transponders, similar to the 
 	* Single-bit error correction for DF11
 	* Up to double-bit error correction for DF17
 * CRC validation and correction
+* ADS-B Extended Squitter (DF17) message decoding:
+	* Aircraft Identification (Callsign)
+	* Aircraft Categories
 
 ## Planned Features
-* Full message content decoding
-	* Aircraft position
-	* Velocity
-	* Aircraft identity
-	* Altitude
-	* Status information
+* Additional ADS-B message type decoding
 * RTL-SDR device integration for real-time reception
 
 ## Prerequisites
@@ -54,10 +52,21 @@ cabal run
 
 Output format:
 ```
-<hex payload> [<DF type> ICAO:<address>]
+<hex payload> [<DF type> ICAO:<address>] <decoded information>
 ```
 
 Example:
 ```
-8d45ac2d583561285c4fa686fcdc [DFExtendedSquitter ICAO:45ac2d]
+Processing test messages:
+Test message: 8d4840d6202cc371c32ce0576098 [DFExtendedSquitter ICAO:4840d6] {DF=DFExtendedSquitter ICAO=4840d6 Type=AircraftID Flight=KLM1023 Category=NoCategory}
+
+Processing binary file:
+8d45ac2d9904d910613f94ba81b5 [DFExtendedSquitter ICAO:45ac2d] {DF=DFExtendedSquitter ICAO=45ac2d}
+5d45ac2da5e9cb [DFAllCallReply ICAO:45ac2d] {DF=DFAllCallReply ICAO=45ac2d}
+8d45ac2d583561285c4fa686fcdc [DFExtendedSquitter ICAO:45ac2d] {DF=DFExtendedSquitter ICAO=45ac2d Alt=9550ft}
+a00006979b580030400000df4221 [DFCommAAltRequest ICAO:45ac2d] {DF=DFCommAAltRequest ICAO=45ac2d Alt=9575ft Squawk=6427}
+5d45ac2da5e9cb [DFAllCallReply ICAO:45ac2d] {DF=DFAllCallReply ICAO=45ac2d}
+5d45ac2da5e9cb [DFAllCallReply ICAO:45ac2d] {DF=DFAllCallReply ICAO=45ac2d}
+02a186b39408d0 [DFShortAirSurveillance ICAO:45ac2d] {DF=DFShortAirSurveillance ICAO=45ac2d Alt=9875ft}
+200006b31828c8 [DFSurveillanceAlt ICAO:45ac2d] {DF=DFSurveillanceAlt ICAO=45ac2d Alt=9875ft Squawk=6525}
 ```
