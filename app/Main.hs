@@ -65,21 +65,10 @@ formatDecodedMessage DecodedMessage{..} =
         
         basicInfo = ["DF=" ++ show msgFormat, 
                     "ICAO=" ++ showHex icaoAddress ""]
-        
-        altitudeInfo = maybe [] 
-            (\alt -> ["Alt=" ++ show (altValue alt) ++ 
-                     case altUnit alt of 
-                         Feet -> "ft"
-                         Meters -> "m"]) 
-            altitude
-            
-        identityInfo = maybe [] 
-            (\id -> ["Squawk=" ++ show id]) 
-            identity
             
         specificInfo = maybe [] formatSpecific msgSpecific
         
-    in "{" ++ unwords (basicInfo ++ altitudeInfo ++ identityInfo ++ specificInfo) ++ "}"
+    in "{" ++ unwords (basicInfo ++ specificInfo) ++ "}"
     where
         formatSpecific :: MessageSpecific -> [String]
         formatSpecific = \case
@@ -89,9 +78,20 @@ formatDecodedMessage DecodedMessage{..} =
             DF17Fields{..} ->
                 ["Type=" ++ show esType] ++ formatESData esData
                 
-            DF45Fields{..} ->
+            DF420Fields{..} ->
                 ["Status=" ++ show flightStatus,
-                 "DR=" ++ show downlinkRequest]
+                 "DR=" ++ show downlinkRequest,
+                 "UM=" ++ show utilityMsg,
+                 "Alt=" ++ show (altValue altitude) ++ 
+                    case altUnit altitude of
+                        Feet -> "ft"
+                        Meters -> "m"]
+                        
+            DF521Fields{..} ->
+                ["Status=" ++ show flightStatus,
+                 "DR=" ++ show downlinkRequest,
+                 "UM=" ++ show utilityMsg,
+                 "Squawk=" ++ show identity]
 
         formatPosition :: Position -> [String]
         formatPosition pos =

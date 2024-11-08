@@ -134,8 +134,6 @@ data AircraftIdentification = AircraftIdentification
 -- | Common fields shared between downlink formats  
 data CommonFields = CommonFields
     { icaoAddress :: !Word32
-    , altitude :: Maybe Altitude
-    , identity :: Maybe Int  -- 13-bit squawk code
     } deriving (Show, Eq)
 
 -- | Surface movement data
@@ -178,9 +176,17 @@ data MessageSpecific
         { esType :: !ExtendedSquitterType
         , esData :: !ExtendedSquitterData
         }
-    | DF45Fields
+    | DF420Fields
         { flightStatus :: !FlightStatus
         , downlinkRequest :: !Int
+        , utilityMsg :: !Int
+        , altitude :: !Altitude
+        }
+    | DF521Fields
+        { flightStatus :: !FlightStatus
+        , downlinkRequest :: !Int
+        , utilityMsg :: !Int
+        , identity :: !Int
         }
     deriving (Show, Eq)
 

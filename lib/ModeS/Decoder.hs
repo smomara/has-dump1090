@@ -17,8 +17,6 @@ decode msg = DecodedMessage
 decodeCommonFields :: VerifiedMessage -> CommonFields
 decodeCommonFields msg@VerifiedMessage{verifiedICAO = icao} = CommonFields
     { icaoAddress = icao
-    , altitude = decodeAltitude msg
-    , identity = decodeIdentity msg
     }
 
 -- | Decode altitude if this message type contains it
@@ -78,30 +76,44 @@ decodeAC12Field payload =
                 , altUnit = Feet 
                 }
 
+-- | Helper to decode utility message (UM) field
+decodeUM :: [Word8] -> Int
+decodeUM payload =
+    ((fromIntegral (payload !! 1) .&. 0x07) `shiftL` 3) .|.
+    ((fromIntegral (payload !! 2) `shiftR` 5) .&. 0x07)
+
 -- | Decode identity/squawk code if present (in DF 4,5,20,21)
-decodeIdentity :: VerifiedMessage -> Maybe Int
-decodeIdentity msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload}
-    | df `elem` [DFSurveillanceAlt, DFSurveillanceId, 
-                 DFCommAAltRequest, DFCommAIdRequest] =
-        Just $ let a = ((fromIntegral (payload !! 3) .&. 0x80) `shiftR` 5) .|.
-                       ((fromIntegral (payload !! 2) .&. 0x02) `shiftR` 0) .|. 
-                       ((fromIntegral (payload !! 2) .&. 0x08) `shiftR` 3)
-                   b = ((fromIntegral (payload !! 3) .&. 0x02) `shiftL` 1) .|.
-                       ((fromIntegral (payload !! 3) .&. 0x08) `shiftR` 2) .|.
-                       ((fromIntegral (payload !! 3) .&. 0x20) `shiftR` 5)
-                   c = ((fromIntegral (payload !! 2) .&. 0x01) `shiftL` 2) .|.
-                       ((fromIntegral (payload !! 2) .&. 0x04) `shiftR` 1) .|.
-                       ((fromIntegral (payload !! 2) .&. 0x10) `shiftR` 4)
-                   d = ((fromIntegral (payload !! 3) .&. 0x01) `shiftL` 2) .|.
-                       ((fromIntegral (payload !! 3) .&. 0x04) `shiftR` 1) .|.
-                       ((fromIntegral (payload !! 3) .&. 0x10) `shiftR` 4)
-               in a * 1000 + b * 100 + c * 10 + d
-    | otherwise = Nothing
+decodeIdentityField :: [Word8] -> Int
+decodeIdentityField payload =
+    let a = ((fromIntegral (payload !! 3) .&. 0x80) `shiftR` 5) .|.
+            ((fromIntegral (payload !! 2) .&. 0x02) `shiftR` 0) .|. 
+            ((fromIntegral (payload !! 2) .&. 0x08) `shiftR` 3)
+        b = ((fromIntegral (payload !! 3) .&. 0x02) `shiftL` 1) .|.
+            ((fromIntegral (payload !! 3) .&. 0x08) `shiftR` 2) .|.
+            ((fromIntegral (payload !! 3) .&. 0x20) `shiftR` 5)
+        c = ((fromIntegral (payload !! 2) .&. 0x01) `shiftL` 2) .|.
+            ((fromIntegral (payload !! 2) .&. 0x04) `shiftR` 1) .|.
+            ((fromIntegral (payload !! 2) .&. 0x10) `shiftR` 4)
+        d = ((fromIntegral (payload !! 3) .&. 0x01) `shiftL` 2) .|.
+            ((fromIntegral (payload !! 3) .&. 0x04) `shiftR` 1) .|.
+            ((fromIntegral (payload !! 3) .&. 0x10) `shiftR` 4)
+    in a * 1000 + b * 100 + c * 10 + d
 
 -- | Decode format-specific fields based on message type
 decodeSpecificFields :: VerifiedMessage -> Maybe MessageSpecific
 decodeSpecificFields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload} = 
     case df of
+        DFAllCallReply ->
+            let ca = payload !! 0 .&. 0x07
+            in Just $ DF11Fields $ case fromCA ca of
+                Just cap -> cap
+                Nothing -> Level7
+
+        DFSurveillanceAlt -> decodeDF45Fields msg
+        DFSurveillanceId -> decodeDF45Fields msg
+        DFCommAAltRequest -> decodeDF45Fields msg
+        DFCommAIdRequest -> decodeDF45Fields msg
+
         DFExtendedSquitter ->
             let meType = payload !! 4 `shiftR` 3
             in case meType of
@@ -128,8 +140,41 @@ decodeSpecificFields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payl
                         , esData = ESAirborneVel vel
                         }
                     Nothing -> Nothing
-                _ -> Nothing -- Handle other types of DF17
-        _ -> Nothing  -- Handle other DFs later
+                _ -> Nothing -- TODO Handle other types of DF17
+
+        _ -> Nothing  -- TODO Handle other DFs later
+
+-- | Decode fields specific to DF4,5,20,21
+decodeDF45Fields :: VerifiedMessage -> Maybe MessageSpecific
+decodeDF45Fields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload} = 
+    let fs = payload !! 0 .&. 0x07  -- Flight status
+        dr = (payload !! 1 `shiftR` 3) .&. 0x1F  -- Downlink request
+        um = decodeUM payload  -- Utility message
+        
+        status = case fromFS fs of 
+            Just s -> s
+            Nothing -> NormalAirborne  -- Default to normal airborne
+            
+    in case df of
+        -- DF4/20: Altitude reply
+        df | df == DFSurveillanceAlt || df == DFCommAAltRequest ->
+            Just $ DF420Fields 
+                { flightStatus = status
+                , downlinkRequest = fromIntegral dr
+                , utilityMsg = um
+                , altitude = decodeAC13Field payload
+                }
+                
+        -- DF5/21: Identity reply
+        df | df == DFSurveillanceId || df == DFCommAIdRequest ->
+            Just $ DF521Fields
+                { flightStatus = status
+                , downlinkRequest = fromIntegral dr
+                , utilityMsg = um
+                , identity = decodeIdentityField payload
+                }
+                
+        _ -> Nothing
 
 -- | Determine aircraft category from TC and CA values
 decodeCategory :: Word8 -> Word8 -> AircraftCategory
