@@ -122,6 +122,12 @@ decodeSpecificFields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payl
                             (decodeAirbornePosition payload)
                             (decodeAC12Field payload)
                         }
+                19 -> case decodeAirborneVelocity payload of
+                    Just vel -> Just $ DF17Fields
+                        { esType = AirborneVel
+                        , esData = ESAirborneVel vel
+                        }
+                    Nothing -> Nothing
                 _ -> Nothing -- Handle other types of DF17
         _ -> Nothing  -- Handle other DFs later
 
@@ -263,7 +269,7 @@ decodeSurfacePosition payload =
         -- Get Movement from bits 6-12 (7 bits)
         movValue = ((fromIntegral (meField !! 0) .&. 0x07) `shiftL` 4) .|.
                   ((fromIntegral (meField !! 1) `shiftR` 4) .&. 0x0F)
-        
+
         -- Get ground track value from bits 14-20 (7 bits)
         trackByte = ((fromIntegral (meField !! 1) .&. 0x0F) `shiftL` 4) .|.
                    ((fromIntegral (meField !! 2) `shiftR` 4) .&. 0x0F)
@@ -277,3 +283,57 @@ decodeSurfacePosition payload =
         { surfacePosition = pos
         , surfaceMovement = mov
         }
+
+-- | Decode airborne velocity from ME field bytes
+decodeAirborneVelocity :: [Word8] -> Maybe Velocity
+decodeAirborneVelocity msg = 
+    let meType = msg !! 4 `shiftR` 3
+        subType = msg !! 4 .&. 0x07
+    in if meType == 19 && subType >= 1 && subType <= 4
+       then case subType of
+            1 -> Just $ decodeGroundVelocity msg
+            2 -> Just $ decodeGroundVelocity msg
+            3 -> Just $ decodeAirVelocity msg
+            4 -> Just $ decodeAirVelocity msg
+            _ -> Nothing
+       else Nothing
+
+-- | Decode ground velocity (subtype 1-2)
+decodeGroundVelocity :: [Word8] -> Velocity
+decodeGroundVelocity msg =
+    let -- Extract EW/NS velocities
+        ewDir = testBit (msg !! 5) 2
+        ewVel = ((fromIntegral (msg !! 5 :: Word8) .&. 0x03 :: Int) `shiftL` 8) .|. 
+                 fromIntegral (msg !! 6 :: Word8) :: Int
+        nsDir = testBit (msg !! 7) 7
+        nsVel = ((fromIntegral (msg !! 7 :: Word8) .&. 0x7F :: Int) `shiftL` 3) .|. 
+                ((fromIntegral (msg !! 8 :: Word8) .&. 0xE0 :: Int) `shiftR` 5) :: Int
+
+        -- Apply directions
+        ewVelSigned = fromIntegral (if ewDir then -ewVel else ewVel) :: Float
+        nsVelSigned = fromIntegral (if nsDir then -nsVel else nsVel) :: Float
+
+        -- Calculate speed and track
+        speed = round $ sqrt (fromIntegral $ nsVel * nsVel + ewVel * ewVel :: Float)
+        heading = if speed > 0
+                 then let h = (atan2 ewVelSigned nsVelSigned) * 
+                             360.0 / (2.0 * pi)
+                      in if h < 0 then h + 360 else h
+                 else 0
+
+        -- Extract vertical rate
+        vr = ((fromIntegral (msg !! 8 :: Word8) .&. 0x07 :: Int) `shiftL` 6) .|. 
+             ((fromIntegral (msg !! 9 :: Word8) .&. 0xFC :: Int) `shiftR` 2)
+        vrSign = testBit (msg !! 8) 3
+        vrValue = (if vrSign then -1 else 1) * (vr - 1) * 64
+
+    in GroundVelocity speed heading vrValue
+
+-- | Decode air velocity (subtype 3-4)
+decodeAirVelocity :: [Word8] -> Velocity
+decodeAirVelocity msg =
+    let headingValid = testBit (msg !! 5) 2
+        headingRaw = ((fromIntegral (msg !! 5 :: Word8) .&. 0x03 :: Int) `shiftL` 5) .|. 
+                     ((fromIntegral (msg !! 6 :: Word8) `shiftR` 3) .&. 0x1F :: Int)
+        heading = (360.0 / 128.0) * fromIntegral headingRaw
+    in AirVelocity heading headingValid

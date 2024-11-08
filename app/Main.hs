@@ -124,10 +124,15 @@ formatDecodedMessage DecodedMessage{..} =
                 formatPosition surfacePosition ++
                 formatSurfaceMovement surfaceMovement
                 
-            ESAirborneVel vel ->
-                ["Speed=" ++ show (groundSpeed vel) ++ "kt",
-                 "Track=" ++ show (track vel) ++ "°",
-                 "VRate=" ++ show (verticalRate vel) ++ "ft/min"]
+            ESAirborneVel vel -> case vel of
+                GroundVelocity {..} ->
+                    ["Speed=" ++ show velSpeed ++ "kt",
+                     "Track=" ++ show velTrack ++ "°",
+                     "VRate=" ++ show velVRate ++ "ft/min"]
+                AirVelocity {..} ->
+                    ["Track=" ++ if velValid
+                                then show velHeading ++ "°"
+                                else "invalid"]
 
 -- | Format a valid verified message with decoded info
 formatVerifiedMessage :: VerifiedMessage -> String
@@ -175,7 +180,9 @@ main :: IO ()
 main = do
     -- Process test messages
     let testMessages = [ "8D4840D6202CC371C32CE0576098"
-                       , "8C4841753A9A153237AEF0F275BE"]
+                       , "8C4841753A9A153237AEF0F275BE"
+                       , "8D485020994409940838175B284F"  -- message a, sub-type 1
+                       , "8DA05F219B06B6AF189400CBC33F"] -- message b, sub-type 2
     putStrLn "Processing test messages:"
     mapM_ processTestMessage testMessages
     putStrLn ""

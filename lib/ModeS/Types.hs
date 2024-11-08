@@ -51,31 +51,24 @@ data Altitude = Altitude
     , altUnit :: !AltitudeUnit
     } deriving (Show, Eq)
 
--- | Geographic coordinates
-data Coordinates = Coordinates
-    { latitude :: !Double
-    , longitude :: !Double
-    } deriving (Show, Eq)
-
 -- | Raw CPR coordinates before decoding
 data RawCPRCoordinates = RawCPRCoordinates
     { rawLatitude :: !Int  
     , rawLongitude :: !Int
     } deriving (Show, Eq)
 
--- | Aircraft velocity components
-data Velocity = Velocity
-    { groundSpeed :: !Int -- In knots
-    , track :: !Float      -- In degrees
-    , verticalRate :: !Int -- In feet/minute
-    } deriving (Show, Eq) 
-
--- | Vertical rate info
-data VerticalRate = VerticalRate
-    { vertRateSource :: !Bool -- True = Barometric, False = Geometric
-    , vertRateSign :: !Bool   -- True = Up, False = Down
-    , vertRateValue :: !Int   -- Actual rate value
-    } deriving (Show, Eq)
+-- | Aircraft velocity types (subtype 1-4)
+data Velocity
+    = GroundVelocity    -- Subtype 1-2
+        { velSpeed :: !Int      -- Computed ground speed in knots
+        , velTrack :: !Float    -- Computed track angle in degrees
+        , velVRate :: !Int      -- Vertical rate in ft/min
+        }
+    | AirVelocity       -- Subtype 3-4 
+        { velHeading :: !Float  -- True heading in degrees
+        , velValid :: !Bool     -- Heading validity
+        }
+    deriving (Show, Eq)
 
 -- | Flight status for DF4,5,20,21 
 data FlightStatus
