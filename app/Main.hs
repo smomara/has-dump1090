@@ -112,9 +112,7 @@ printAircraft Aircraft{..} = do
     putStrLn $ printf "%-8s | %-8s | %-20s | %-10s | %-10s | %-10s | %-15s"
         hex ident pos alt spd hdg vr
   where
-    formatPos pos = printf "%.4f, %.4f" 
-        (fromIntegral $ rawLatitude $ posCoordinates pos :: Double)
-        (fromIntegral $ rawLongitude $ posCoordinates pos :: Double)
+    formatPos pos = printf "%.4f, %.4f" (latitude pos) (longitude pos)
 
 main :: IO ()
 main = do

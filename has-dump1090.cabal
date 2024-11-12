@@ -25,6 +25,7 @@ library
                     , ModeS.Decoder
                     , ModeS.Types
                     , Aircraft
+                    , Aircraft.CPR
 
 executable has-dump1090
     import:           shared-properties
