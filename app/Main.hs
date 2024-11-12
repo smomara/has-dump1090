@@ -4,71 +4,83 @@
 module Main where
 
 import qualified Data.ByteString as BS
-import Data.Word (Word8)
-import Numeric (showHex, readHex)
-import Control.Monad (foldM)
-import Data.Bits
-import Data.Char (digitToInt)
+import Data.Word (Word8, Word32)
+import Numeric (showHex)
+import Control.Monad (forever, void, when)
+import System.Exit (exitFailure)
+import Foreign.Marshal.Array (peekArray)
+import Foreign.Ptr (Ptr, castPtr)
+import Foreign.C.Types (CUChar)
+import RTLSDR
 import ModeS
 
--- | Constants matching the test case
-dataLen :: Int
-dataLen = 16 * 16384  -- 256k
+-- | RTL-SDR configuration constants
+sampleRate :: Word32
+sampleRate = 2000000  -- 2 MHz sample rate for Mode S
 
-preambleUs :: Int
-preambleUs = 8
+centerFreq :: Word32
+centerFreq = 1090000000  -- 1090 MHz (Mode S frequency)
 
-longMsgBits :: Int
-longMsgBits = 112
+bufferSize :: Int
+bufferSize = 16 * 16384  -- Same as previous code
 
-shortMsgBits :: Int
-shortMsgBits = 56
+gainMode :: Bool
+gainMode = False  -- Auto gain
 
-fullLen :: Int
-fullLen = preambleUs + longMsgBits
+-- | Initialize the RTL-SDR device
+initRTLSDR :: IO RTLSDR
+initRTLSDR = do
+    -- Get device count
+    count <- getDeviceCount
+    when (count == 0) $ do
+        putStrLn "No RTL-SDR devices found"
+        exitFailure
 
--- | Convert bytes to hex string
-bytesToHex :: [Word8] -> String
-bytesToHex = concatMap (\b -> let s = showHex b "" in if length s == 1 then '0':s else s)
+    -- Try to open first device
+    open 0 >>= \case
+        Nothing -> do
+            putStrLn "Failed to open RTL-SDR device"
+            exitFailure
+        Just dev -> do
+            -- Configure device
+            void $ setSampleRate dev sampleRate
+            void $ setCenterFreq dev centerFreq
+            void $ setTunerGainMode dev gainMode
+            
+            -- Print device info
+            name <- getDeviceName 0
+            gains <- getTunerGains dev
+            putStrLn $ "Opened RTL-SDR device: " ++ name
+            putStrLn $ "Available gains: " ++ show gains
+            putStrLn $ "Sample rate: " ++ show sampleRate
+            putStrLn $ "Center frequency: " ++ show centerFreq
+            
+            -- Reset buffer before starting
+            void $ resetBuffer dev
+            return dev
 
--- | Convert hex string to bytes
-hexToBytes :: String -> [Word8]
-hexToBytes [] = []
-hexToBytes [_] = [] -- Ignore odd length
-hexToBytes (h1:h2:rest) = 
-    let byte = fromIntegral $ digitToInt h1 * 16 + digitToInt h2
-    in byte : hexToBytes rest
-
--- | Process a test message in hex format
-processTestMessage :: String -> IO ()
-processTestMessage hexMsg = do
-    let bytes = hexToBytes $ filter (/= ' ') hexMsg
-        msgBits = concatMap (\b -> [testBit b i | i <- reverse [0..7]]) bytes
-        msgLen = if length bytes > 7 
-                then LongMessage
-                else ShortMessage
-        msg = Message msgLen msgBits
-        cache = newIcaoCache icaoCacheLen icaoCacheTtl
+-- | Process samples from the RTL-SDR
+processRTLSDRSamples :: Ptr CUChar -> Int -> IcaoCache -> IO IcaoCache
+processRTLSDRSamples ptr len cache = do
+    -- Convert samples to ByteString
+    samples <- BS.packCStringLen (castPtr ptr, len)
     
-    verifiedMsg <- verify msg cache
-    case verifiedMsg of
-        Just (vm, _) -> 
-            if verifiedParity vm == Valid
-            then putStrLn $ "Test message: " ++ formatVerifiedMessage vm
-            else putStrLn "Invalid checksum"
-        Nothing -> putStrLn "Failed to verify message"
+    -- Process the samples through Mode S decoder
+    (messages, newCache) <- processModeSData samples cache
+    
+    -- Print decoded messages
+    mapM_ (putStrLn . formatDecodedMessage) messages
+    
+    return newCache
 
 -- | Format a decoded message
 formatDecodedMessage :: DecodedMessage -> String
 formatDecodedMessage DecodedMessage{..} =
     let CommonFields{..} = msgCommon
-        
         basicInfo = ["DF=" ++ show msgFormat, 
                     "ICAO=" ++ showHex icaoAddress ""]
-            
         specificInfo = maybe [] formatSpecific msgSpecific
-        
-    in "{" ++ unwords (basicInfo ++ specificInfo) ++ "}"
+    in "[RTL-SDR] {" ++ unwords (basicInfo ++ specificInfo) ++ "}"
     where
         formatSpecific :: MessageSpecific -> [String]
         formatSpecific = \case
@@ -92,20 +104,6 @@ formatDecodedMessage DecodedMessage{..} =
                  "DR=" ++ show downlinkRequest,
                  "UM=" ++ show utilityMsg,
                  "Squawk=" ++ show identity]
-
-        formatPosition :: Position -> [String]
-        formatPosition pos =
-            ["Lat=" ++ show (fromIntegral $ rawLatitude $ posCoordinates pos),
-             "Lon=" ++ show (fromIntegral $ rawLongitude $ posCoordinates pos),
-             "OddFormat=" ++ show (posOddFormat pos),
-             "UTC=" ++ show (posUTCSync pos)]
-
-        formatSurfaceMovement :: SurfaceMovement -> [String]
-        formatSurfaceMovement mov =
-            ["Speed=" ++ show (surfaceSpeed mov) ++ "kt",
-             "Track=" ++ if surfaceTrackValid mov 
-                        then show (surfaceTrack mov) ++ "°"
-                        else "invalid"]
 
         formatESData :: ExtendedSquitterData -> [String]
         formatESData = \case
@@ -134,76 +132,33 @@ formatDecodedMessage DecodedMessage{..} =
                                 then show velHeading ++ "°"
                                 else "invalid"]
 
--- | Format a valid verified message with decoded info
-formatVerifiedMessage :: VerifiedMessage -> String
-formatVerifiedMessage vm =
-    let dfType = show (verifiedDF vm)
-        icaoHex = showHex (verifiedICAO vm) ""
-        payload = bytesToHex (verifiedPayload vm)
-        decoded = formatDecodedMessage (decode vm)
-    in payload ++ " [" ++ dfType ++ " ICAO:" ++ icaoHex ++ "] " ++ decoded
+        formatPosition :: Position -> [String]
+        formatPosition pos =
+            ["Lat=" ++ show (fromIntegral $ rawLatitude $ posCoordinates pos),
+             "Lon=" ++ show (fromIntegral $ rawLongitude $ posCoordinates pos),
+             "OddFormat=" ++ show (posOddFormat pos),
+             "UTC=" ++ show (posUTCSync pos)]
 
--- | Split ByteString into chunks of specified size
-chunksOf :: Int -> BS.ByteString -> [BS.ByteString]
-chunksOf size bs
-    | BS.length bs < size = []
-    | otherwise = 
-        let (chunk, rest) = BS.splitAt size bs
-        in if BS.length chunk == size
-           then chunk : chunksOf size rest
-           else []
-
--- | Process a single message and convert to output string if valid
-messageToString :: Message -> IcaoCache -> IO (Maybe String, IcaoCache)
-messageToString msg cache = do
-    verifiedMsg <- verify msg cache
-    case verifiedMsg of
-        Just (dm, newCache) -> 
-            if verifiedParity dm == Valid
-            then return (Just (formatVerifiedMessage dm), newCache)
-            else return (Nothing, newCache)
-        Nothing -> return (Nothing, cache)
-
--- | Process a chunk of ByteString data
-processChunk :: BS.ByteString -> IcaoCache -> IO ([String], IcaoCache)
-processChunk chunk cache = do
-    let messages = process chunk
-    foldM processMessage ([], cache) messages
-  where
-    processMessage (outputs, currentCache) msg = do
-        (mOutput, newCache) <- messageToString msg currentCache
-        case mOutput of
-            Just output -> return (outputs ++ [output], newCache)
-            Nothing -> return (outputs, newCache)
+        formatSurfaceMovement :: SurfaceMovement -> [String]
+        formatSurfaceMovement mov =
+            ["Speed=" ++ show (surfaceSpeed mov) ++ "kt",
+             "Track=" ++ if surfaceTrackValid mov 
+                        then show (surfaceTrack mov) ++ "°"
+                        else "invalid"]
 
 main :: IO ()
 main = do
-    -- Process test messages
-    let testMessages = [ "8D4840D6202CC371C32CE0576098"
-                       , "8C4841753A9A153237AEF0F275BE"
-                       , "8D485020994409940838175B284F"  -- message a, sub-type 1
-                       , "8DA05F219B06B6AF189400CBC33F"] -- message b, sub-type 2
-    putStrLn "Processing test messages:"
-    mapM_ processTestMessage testMessages
-    putStrLn ""
+    putStrLn "Starting Mode S receiver..."
     
-    -- Process binary file
-    putStrLn "Processing binary file:"
+    -- Initialize RTL-SDR
+    dev <- initRTLSDR
+    
     -- Create initial ICAO cache
     let initialCache = newIcaoCache icaoCacheLen icaoCacheTtl
     
-    -- Read the binary file
-    contents <- BS.readFile "fixture.bin"
+    -- Start async reading with callback
+    void $ readAsync dev 0 (fromIntegral bufferSize) $ \ptr len -> do
+        void $ processRTLSDRSamples ptr len initialCache
     
-    -- Process the file in chunks
-    let chunks = chunksOf dataLen contents
-    
-    -- Process all chunks while maintaining cache state
-    (validMessages, _) <- foldM processChunks ([], initialCache) chunks
-    
-    -- Print all valid messages
-    mapM_ putStrLn validMessages
-  where
-    processChunks (outputs, cache) chunk = do
-        (newOutputs, newCache) <- processChunk chunk cache
-        return (outputs ++ newOutputs, newCache)
+    -- Wait forever (until Ctrl-C)
+    forever $ return ()
