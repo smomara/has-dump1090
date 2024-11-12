@@ -14,6 +14,7 @@ common shared-properties
                     , bytestring
                     , vector
                     , time
+                    , containers
     
 library
     import:           shared-properties
@@ -23,6 +24,7 @@ library
                     , ModeS.Verifier
                     , ModeS.Decoder
                     , ModeS.Types
+                    , Aircraft
 
 executable has-dump1090
     import:           shared-properties

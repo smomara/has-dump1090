@@ -1,18 +1,23 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Main where
 
+import qualified Data.Map.Strict as Map
 import qualified Data.ByteString as BS
-import Data.Word (Word8, Word32)
+import Data.Word (Word32)
 import Numeric (showHex)
 import Control.Monad (forever, void, when)
 import System.Exit (exitFailure)
-import Foreign.Marshal.Array (peekArray)
 import Foreign.Ptr (Ptr, castPtr)
 import Foreign.C.Types (CUChar)
+import Control.Monad (foldM)
+import Text.Printf (printf)
+import Control.Concurrent.MVar
 import RTLSDR
 import ModeS
+import Aircraft
 
 -- | RTL-SDR configuration constants
 sampleRate :: Word32
@@ -60,105 +65,74 @@ initRTLSDR = do
             return dev
 
 -- | Process samples from the RTL-SDR
-processRTLSDRSamples :: Ptr CUChar -> Int -> IcaoCache -> IO IcaoCache
-processRTLSDRSamples ptr len cache = do
+processRTLSDRSamples :: Ptr CUChar -> Int -> MVar (IcaoCache, AircraftState) -> IO ()
+processRTLSDRSamples ptr len stateMVar = do
     -- Convert samples to ByteString
     samples <- BS.packCStringLen (castPtr ptr, len)
     
-    -- Process the samples through Mode S decoder
-    (messages, newCache) <- processModeSData samples cache
-    
-    -- Print decoded messages
-    mapM_ (putStrLn . formatDecodedMessage) messages
-    
-    return newCache
+    -- Update state atomically
+    modifyMVar_ stateMVar $ \(cache, aircraftState) -> do
+        -- Process the samples through Mode S decoder
+        (messages, newCache) <- processModeSData samples cache
+        
+        -- Update aircraft state for each message
+        updatedAircraftState <- foldM updateAircraft aircraftState messages
+        
+        -- Periodically prune old aircraft
+        finalState <- pruneOldAircraft updatedAircraftState
+        
+        -- Print current aircraft status
+        printAircraftStatus finalState
+        
+        return (newCache, finalState)
 
--- | Format a decoded message
-formatDecodedMessage :: DecodedMessage -> String
-formatDecodedMessage DecodedMessage{..} =
-    let CommonFields{..} = msgCommon
-        basicInfo = ["DF=" ++ show msgFormat, 
-                    "ICAO=" ++ showHex icaoAddress ""]
-        specificInfo = maybe [] formatSpecific msgSpecific
-    in "[RTL-SDR] {" ++ unwords (basicInfo ++ specificInfo) ++ "}"
-    where
-        formatSpecific :: MessageSpecific -> [String]
-        formatSpecific = \case
-            DF11Fields{..} ->
-                ["CA=" ++ show capability]
-                
-            DF17Fields{..} ->
-                ["Type=" ++ show esType] ++ formatESData esData
-                
-            DF420Fields{..} ->
-                ["Status=" ++ show flightStatus,
-                 "DR=" ++ show downlinkRequest,
-                 "UM=" ++ show utilityMsg,
-                 "Alt=" ++ show (altValue altitude) ++ 
-                    case altUnit altitude of
-                        Feet -> "ft"
-                        Meters -> "m"]
-                        
-            DF521Fields{..} ->
-                ["Status=" ++ show flightStatus,
-                 "DR=" ++ show downlinkRequest,
-                 "UM=" ++ show utilityMsg,
-                 "Squawk=" ++ show identity]
+-- | Print current status of all tracked aircraft
+printAircraftStatus :: AircraftState -> IO ()
+printAircraftStatus AircraftState{aircraft} = do
+    putStrLn "\ESC[2J\ESC[H"  -- Clear screen and move to top
+    putStrLn $ "Tracking " ++ show (Map.size aircraft) ++ " aircraft:"
+    putStrLn $ replicate 80 '-'
+    putStrLn $ printf "%-8s | %-8s | %-20s | %-10s | %-10s | %-10s | %-15s"
+        "HEX" "CAllSIGN" "POSITION" "ALTITUDE" "SPEED" "TRACK" "VERT RATE"
+    putStrLn $ replicate 80 '-'
+    mapM_ printAircraft $ Map.elems aircraft
+    putStrLn $ replicate 80 '-'
 
-        formatESData :: ExtendedSquitterData -> [String]
-        formatESData = \case
-            ESAircraftID ident ->
-                ["Flight=" ++ flightNumber ident,
-                 "Category=" ++ show (aircraftCategory ident)]
-                 
-            ESAirbornePos pos alt ->
-                formatPosition pos ++
-                ["Alt=" ++ show (altValue alt) ++ 
-                    case altUnit alt of
-                        Feet -> "ft"
-                        Meters -> "m"]
-                        
-            ESSurfacePos SurfacePosition{..} ->
-                formatPosition surfacePosition ++
-                formatSurfaceMovement surfaceMovement
-                
-            ESAirborneVel vel -> case vel of
-                GroundVelocity {..} ->
-                    ["Speed=" ++ show velSpeed ++ "kt",
-                     "Track=" ++ show velTrack ++ "°",
-                     "VRate=" ++ show velVRate ++ "ft/min"]
-                AirVelocity {..} ->
-                    ["Track=" ++ if velValid
-                                then show velHeading ++ "°"
-                                else "invalid"]
-
-        formatPosition :: Position -> [String]
-        formatPosition pos =
-            ["Lat=" ++ show (fromIntegral $ rawLatitude $ posCoordinates pos),
-             "Lon=" ++ show (fromIntegral $ rawLongitude $ posCoordinates pos),
-             "OddFormat=" ++ show (posOddFormat pos),
-             "UTC=" ++ show (posUTCSync pos)]
-
-        formatSurfaceMovement :: SurfaceMovement -> [String]
-        formatSurfaceMovement mov =
-            ["Speed=" ++ show (surfaceSpeed mov) ++ "kt",
-             "Track=" ++ if surfaceTrackValid mov 
-                        then show (surfaceTrack mov) ++ "°"
-                        else "invalid"]
+-- | Print information about a single aircraft
+printAircraft :: Aircraft -> IO ()
+printAircraft Aircraft{..} = do
+    let hex = showHex icaoAddress ""
+        ident = maybe "unknown" id callsign
+        pos = maybe "unknown" formatPos position
+        alt = maybe "unknown" (\a -> show a ++ " ft") altitudeFt
+        spd = maybe "unknown" (\s -> show s ++ " kt") groundSpeed
+        hdg = maybe "unknown" (\t -> show t ++ "°") track
+        vr = maybe "unknown" (\v -> show v ++ " ft/min") verticalRate
+        
+    putStrLn $ printf "%-8s | %-8s | %-20s | %-10s | %-10s | %-10s | %-15s"
+        hex ident pos alt spd hdg vr
+  where
+    formatPos pos = printf "%.4f, %.4f" 
+        (fromIntegral $ rawLatitude $ posCoordinates pos :: Double)
+        (fromIntegral $ rawLongitude $ posCoordinates pos :: Double)
 
 main :: IO ()
 main = do
-    putStrLn "Starting Mode S receiver..."
+    putStrLn "Starting Mode S aircraft tracker..."
     
     -- Initialize RTL-SDR
     dev <- initRTLSDR
     
-    -- Create initial ICAO cache
+    -- Create initial states
     let initialCache = newIcaoCache icaoCacheLen icaoCacheTtl
+    initialAircraft <- newAircraftState
+    
+    -- Create MVar to hold state
+    stateMVar <- newMVar (initialCache, initialAircraft)
     
     -- Start async reading with callback
-    void $ readAsync dev 0 (fromIntegral bufferSize) $ \ptr len -> do
-        void $ processRTLSDRSamples ptr len initialCache
+    void $ readAsync dev 0 (fromIntegral bufferSize) $ \ptr len -> 
+        processRTLSDRSamples ptr len stateMVar
     
     -- Wait forever (until Ctrl-C)
     forever $ return ()
