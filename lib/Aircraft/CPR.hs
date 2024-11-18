@@ -24,6 +24,7 @@ decodeCPR evenLat evenLon oddLat oddLon evenTime oddTime =
         then Nothing
         else decodePosition
   where
+    decodePosition :: Maybe CPRPosition
     decodePosition = do
         -- Convert coordinates to floating point
         let lat0 = fromIntegral evenLat / 131072.0
@@ -32,18 +33,19 @@ decodeCPR evenLat evenLon oddLat oddLon evenTime oddTime =
             lon1 = fromIntegral oddLon / 131072.0
 
         -- Compute latitude index
-        let j = floor $ (59 * lat0 - 60 * lat1 + 0.5) 
-        
+        let j :: Integer
+            j = floor $ ((59 * lat0 - 60 * lat1) / 131072.0) + 0.5
+
         -- Compute final latitudes for both odd and even frames
         let rlat0 = airDLat0 * (modFloat (fromIntegral j, 60) + lat0)
             rlat1 = airDLat1 * (modFloat (fromIntegral j, 59) + lat1)
-        
+
         -- Adjust latitudes for southern hemisphere
         let rlat0' = if rlat0 >= 270 then rlat0 - 360 else rlat0
             rlat1' = if rlat1 >= 270 then rlat1 - 360 else rlat1
-        
+
         -- Check that both are in same latitude zone
-        if not $ isSameLatZone rlat0' rlat1'
+        if nlFunction rlat0' /= nlFunction rlat1'
             then Nothing
             else do
                 -- Compute final position based on most recent frame
@@ -51,44 +53,37 @@ decodeCPR evenLat evenLon oddLat oddLon evenTime oddTime =
                     then do
                         -- Use even frame data
                         let nl = nlFunction rlat0'
-                            ni = max 1 nl  -- Changed from (nl - 0)
-                            m = floor $ (lon0 * (fromIntegral nl - 1) - 
-                                       lon1 * fromIntegral nl + 0.5)  -- Simplified formula
-                            dLon = 360.0 / fromIntegral ni  -- Direct calculation
+                            ni = max 1 (nFunction rlat0' 0)  
+                            m :: Integer
+                            m = floor $ ((lon0 * fromIntegral (nl-1) - 
+                                        lon1 * fromIntegral nl) / 131072.0) + 0.5
+                            dLon = 360.0 / fromIntegral ni
                             lon = dLon * (modFloat (fromIntegral m, ni) + lon0)
+                            lonAdj = if lon > 180 then lon - 360 else lon
                         Just $ CPRPosition 
                             { latitude = rlat0'
-                            , longitude = normalizeLon lon
+                            , longitude = lonAdj
                             }
                     else do
                         -- Use odd frame data  
                         let nl = nlFunction rlat1'
-                            ni = max 1 (nl - 1)
-                            m = floor $ (lon0 * (fromIntegral nl - 1) - 
-                                       lon1 * fromIntegral nl + 0.5)  -- Simplified formula
-                            dLon = 360.0 / fromIntegral ni  -- Direct calculation
+                            ni = max 1 (nFunction rlat1' 1)
+                            m :: Integer
+                            m = floor $ ((lon0 * fromIntegral (nl-1) - 
+                                        lon1 * fromIntegral nl) / 131072.0) + 0.5
+                            dLon = 360.0 / fromIntegral ni
                             lon = dLon * (modFloat (fromIntegral m, ni) + lon1)
+                            lonAdj = if lon > 180 then lon - 360 else lon
                         Just $ CPRPosition
                             { latitude = rlat1'
-                            , longitude = normalizeLon lon
+                            , longitude = lonAdj
                             }
-
--- | Normalize longitude to -180 to +180 range
-normalizeLon :: Double -> Double
-normalizeLon lon 
-    | lon > 180 = lon - 360
-    | lon < -180 = lon + 360
-    | otherwise = lon
-
--- | Check if latitudes are in the same zone
-isSameLatZone :: Double -> Double -> Bool
-isSameLatZone lat1 lat2 = nlFunction lat1 == nlFunction lat2
 
 -- | Positive modulo operation
 modFloat :: (Double, Int) -> Double
 modFloat (a, b) = a `mod'` fromIntegral b
 
--- | NL function to determine number of latitude zones
+-- | NL function to determine number of longitude zones
 nlFunction :: Double -> Int
 nlFunction lat = 
     let abslat = abs lat
@@ -151,3 +146,9 @@ nlFunction lat =
         else if abslat < 86.53536998 then 3
         else if abslat < 87.00000000 then 2
         else 1
+
+-- | Calculates the number of longitude zones at a given latitude
+nFunction :: Double -> Int -> Int 
+nFunction lat isOdd = 
+    let nl = nlFunction lat - isOdd
+    in max 1 nl
