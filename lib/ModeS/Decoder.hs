@@ -15,14 +15,14 @@ decode msg = DecodedMessage
 
 -- | Decode the common fields from a verified Mode S message
 decodeCommonFields :: VerifiedMessage -> CommonFields
-decodeCommonFields msg@VerifiedMessage{verifiedICAO = icao} = CommonFields
+decodeCommonFields VerifiedMessage{verifiedICAO = icao} = CommonFields
     { icaoAddress = icao
     }
 
 -- | Decode altitude if this message type contains it
 decodeAltitude :: VerifiedMessage -> Maybe Altitude
-decodeAltitude msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload} =
-    case df of
+decodeAltitude VerifiedMessage{verifiedDF = dfType, verifiedPayload = payload} =
+    case dfType of
         -- DF 0, 4, 16, 20 contain 13-bit altitude
         df | df `elem` [DFShortAirSurveillance, DFSurveillanceAlt, 
                        DFLongAirAir, DFCommAAltRequest] ->
@@ -146,7 +146,7 @@ decodeSpecificFields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payl
 
 -- | Decode fields specific to DF4,5,20,21
 decodeDF45Fields :: VerifiedMessage -> Maybe MessageSpecific
-decodeDF45Fields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload} = 
+decodeDF45Fields VerifiedMessage{verifiedDF = dfType, verifiedPayload = payload} = 
     let fs = payload !! 0 .&. 0x07  -- Flight status
         dr = (payload !! 1 `shiftR` 3) .&. 0x1F  -- Downlink request
         um = decodeUM payload  -- Utility message
@@ -155,7 +155,7 @@ decodeDF45Fields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload}
             Just s -> s
             Nothing -> NormalAirborne  -- Default to normal airborne
             
-    in case df of
+    in case dfType of
         -- DF4/20: Altitude reply
         df | df == DFSurveillanceAlt || df == DFCommAAltRequest ->
             Just $ DF420Fields 
@@ -283,7 +283,10 @@ decodeAirbornePosition = decodePosition
 -- | Decode surface movement field
 decodeSurfaceMovement :: Word8 -> Word8 -> SurfaceMovement
 decodeSurfaceMovement movByte trkByte =
-    let mov = fromIntegral $ movByte .&. 0x7F
+    let mov :: Int
+        mov = fromIntegral $ movByte .&. 0x7F
+
+        speed :: Double
         speed = case mov of
             0 -> 0       -- Not available
             1 -> 0       -- Stopped

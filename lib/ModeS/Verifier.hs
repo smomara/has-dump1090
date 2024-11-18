@@ -62,7 +62,7 @@ checksumTable = V.fromList [
 bitsToBytes :: [Bool] -> [Word8]
 bitsToBytes [] = []
 bitsToBytes bits =
-    let byte = foldr (\(bit, pos) acc -> if bit then setBit acc pos else acc)
+    let byte = foldr (\(bitVal, pos) acc -> if bitVal then setBit acc pos else acc)
                      0
                      (zip (take 8 bits) [7,6..0])
     in byte : bitsToBytes (drop 8 bits)
@@ -87,15 +87,15 @@ getCurrentTimeSeconds = round <$> getPOSIXTime
 
 -- Calculate checksum
 calculateChecksum :: [Word8] -> Int -> Word32
-calculateChecksum bytes msgBits = 
-    let offset = if msgBits == 112 then 0 else (112 - 56)
-        indices = [0..msgBits-1]
+calculateChecksum bytes bitLength = 
+    let offset = if bitLength == 112 then 0 else (112 - 56)
+        indices = [0..bitLength-1]
         folder :: Word32 -> Int -> Word32
         folder crc j =
             let byte = j `div` 8
-                bit = j `mod` 8
+                bitPos = j `mod` 8
                 bitmask :: Word32
-                bitmask = 1 `shiftL` (7 - bit)
+                bitmask = 1 `shiftL` (7 - bitPos)
                 byteVal :: Word32
                 byteVal = fromIntegral (bytes !! byte)
             in if byteVal .&. bitmask /= 0
@@ -105,8 +105,8 @@ calculateChecksum bytes msgBits =
 
 -- | Extract message CRC from last three bytes
 extractMessageCRC :: [Word8] -> Int -> Word32
-extractMessageCRC bytes msgBits =
-    let lastIndex = msgBits `div` 8 - 1
+extractMessageCRC bytes bitLength =
+    let lastIndex = bitLength `div` 8 - 1
     in  (fromIntegral (bytes !! (lastIndex - 2)) `shiftL` 16) .|.
         (fromIntegral (bytes !! (lastIndex - 1)) `shiftL` 8) .|.
         fromIntegral (bytes !! lastIndex)
@@ -126,16 +126,6 @@ addRecentlySeenIcaoAddr addr cache = do
         newAddrs = V.modify (\v -> MV.write v idx addr) (cacheAddrs cache)
         newTimes = V.modify (\v -> MV.write v idx currentTime) (cacheTimes cache)
     return $ cache { cacheAddrs = newAddrs, cacheTimes = newTimes }
-
--- | Check if ICAO address was recently seen
-wasRecentlySeen :: Word32 -> IcaoCache -> IO Bool
-wasRecentlySeen addr cache = do
-    currentTime <- getCurrentTimeSeconds
-    let idx = icaoCacheHash addr (cacheSize cache)
-        storedAddr = cacheAddrs cache V.! idx
-        storedTime = cacheTimes cache V.! idx
-    return $ storedAddr == addr &&
-            currentTime - storedTime <= fromIntegral (cacheTtl cache)
 
 -- | Hash function for ICAO cache
 icaoCacheHash :: Word32 -> Int -> Int
@@ -200,37 +190,6 @@ fixTwoBitsErrors msg bits = go 0 0
              then Just ([i, j], modifiedMsg)
              else go i (j + 1)-- | Brute force ICAO address recovery
 
-bruteForceAp :: Message -> VerifiedMessage -> IcaoCache -> IO (Maybe Word32)
-bruteForceAp msg dm cache = 
-    if dfRequiresBruteForce (verifiedDF dm)
-    then do
-        let bytes = verifiedPayload dm
-            msgBits = case msgLength msg of
-                ShortMessage -> 56
-                LongMessage -> 112
-            lastByte = (msgBits `div` 8) - 1
-            crc = calculateChecksum bytes msgBits
-            recoveredAddr =
-                (fromIntegral (bytes !! (lastByte-2)) `xor` ((crc `shiftR` 16) .&. 0xff)) `shiftL` 16 .|.
-                (fromIntegral (bytes !! (lastByte-1)) `xor` ((crc `shiftR` 8) .&. 0xff)) `shiftL` 8 .|.
-                (fromIntegral (bytes !! lastByte) `xor` (crc .&. 0xff))
-        
-        -- Check if address was recently seen
-        seen <- wasRecentlySeen recoveredAddr cache
-        return $ if seen then Just recoveredAddr else Nothing
-    else return Nothing
-  where
-    dfRequiresBruteForce :: DownlinkFormat -> Bool 
-    dfRequiresBruteForce df = df `elem` 
-        [ DFShortAirSurveillance
-        , DFSurveillanceAlt
-        , DFSurveillanceId
-        , DFLongAirAir
-        , DFCommAAltRequest
-        , DFCommAIdRequest
-        , DFCommCELM
-        ]
-
 -- | Pure decoding function without cache operations
 verifyPure :: Message -> Maybe VerifiedMessage
 verifyPure msg = do
@@ -245,12 +204,12 @@ verifyPure msg = do
         initialParity = computedCRC == messageCRC
         
         -- Try error correction for DF11/17 if needed
-        (errorBits, correctedBytes, correctedParity) =
+        (_, correctedBytes, correctedParity) =
             if not initialParity &&
                (df == DFAllCallReply || df == DFExtendedSquitter)
             then
                 case fixSingleBitErrors bytes numBits of
-                    Just (bit, fixed) -> ([bit], fixed, True)
+                    Just (bitPos, fixed) -> ([bitPos], fixed, True)
                     Nothing ->
                         if df == DFExtendedSquitter then
                             case fixTwoBitsErrors bytes numBits of
@@ -292,11 +251,11 @@ recoverAddress msg dm cache =
     if dfRequiresBruteForce (verifiedDF dm)
     then do
         let bytes = verifiedPayload dm
-            msgBits = case msgLength msg of
+            numBits = case msgLength msg of
                 ShortMessage -> 56
                 LongMessage -> 112
-            lastByte = (msgBits `div` 8) - 1
-            crc = calculateChecksum bytes msgBits
+            lastByte = (numBits `div` 8) - 1
+            crc = calculateChecksum bytes numBits
             recoveredAddr =
                 (fromIntegral (bytes !! (lastByte-2)) `xor` ((crc `shiftR` 16) .&. 0xff)) `shiftL` 16 .|.
                 (fromIntegral (bytes !! (lastByte-1)) `xor` ((crc `shiftR` 8) .&. 0xff)) `shiftL` 8 .|.
