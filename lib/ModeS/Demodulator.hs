@@ -10,17 +10,14 @@ import Data.ByteString.Unsafe qualified as BSU
 import Data.Vector.Unboxed qualified as V
 import Data.Word (Word16, Word8)
 
-import ModeS.Types (Message (..), MessageLength (..))
+import ModeS.Types (Message (..), MessageLength (..), fromMessageLength)
 
 -- | Constants
-longMsgBits :: Int
-longMsgBits = 112
+preambleSamples :: Int
+preambleSamples = 8 * 2_000_000 * 1_000_000 -- assuming 2 MHz sample rate for now
 
-shortMsgBits :: Int
-shortMsgBits = 56
-
-preambleUs :: Int
-preambleUs = 8
+totalMessageSamples :: Int
+totalMessageSamples = fromMessageLength LongMessage + preambleSamples
 
 -- | Convert raw I/Q samples into magnitude vector
 computeMagnitudeVector :: BS.ByteString -> V.Vector Word16
@@ -122,10 +119,7 @@ demodulateMessage mags startPos = do
   initialBits <- demodulateInitialBits mags startPos 8
   msgLenType <- determineMessageLength initialBits
 
-  let requiredBits = case msgLenType of
-        ShortMessage -> shortMsgBits
-        LongMessage -> longMsgBits
-
+  let requiredBits = fromMessageLength msgLenType
   if startPos + (requiredBits * 2) > V.length mags
     then Nothing
     else do
@@ -143,9 +137,7 @@ demodulateMessage mags startPos = do
 -- | Helper to calculate average delta across magnitude samples
 calcAverageDelta :: V.Vector Word16 -> Int -> MessageLength -> Double
 calcAverageDelta mags start msgLenType =
-  let msglen = case msgLenType of
-        ShortMessage -> shortMsgBits `div` 8
-        LongMessage -> longMsgBits `div` 8
+  let msglen = fromMessageLength msgLenType `div` 8
       !delta =
         sum
           [ abs
@@ -172,15 +164,13 @@ detectMessages :: V.Vector Word16 -> [Message]
 detectMessages mags = go 0 []
  where
   go pos acc
-    | pos + preambleUs * 2 + shortMsgBits * 2 >= V.length mags = reverse acc
+    | pos + totalMessageSamples >= V.length mags = reverse acc
     | otherwise =
         if detectPreamble mags pos
-          then case demodulateMessage mags (pos + preambleUs * 2) of
+          then case demodulateMessage mags (pos + preambleSamples * 2) of
             Just msg ->
-              let skipLen = case msgLength msg of
-                    ShortMessage -> shortMsgBits
-                    LongMessage -> longMsgBits
-              in go (pos + preambleUs * 2 + skipLen * 2) (msg : acc)
+              let skipLen = fromMessageLength (msgLength msg)
+              in go (pos + preambleSamples * 2 + skipLen * 2) (msg : acc)
             Nothing -> go (pos + 1) acc
           else go (pos + 1) acc
 
