@@ -2,7 +2,7 @@
 A real-time aircaft tracker written in Haskell that decodes ADS-B messages from aircraft transponders using an RTL-SDR device.
 
 # What it does
-Listens to radio signals from nearby aircraft on 1090 MHz and display their:
+Detects and decodes ADS-B signals from nearby aircraft and display their:
 * Location (latitude + longitude)
 * Altitude
 * Speed
@@ -22,25 +22,8 @@ a78945   | unknown  | 39.0297, -77.1098    | 9875 ft    | 281 kt     | 50.4°   
 ```
 
 # Requirements
-* GHC
-* Cabal
 * RTL-SDR USB device
-* librtlsdr development files
+* Nix
 
 # Quick Start
-```bash
-# Install dependencies (Ubuntu/Debian)
-sudo apt install librtlsdr-dev
-
-# Build and run
-git clone https://github.com/smomara/has-dump1090.git
-cd has-dump1090
-cabal build
-cabal run
-```
-
-# License
-MIT License
-
-# Contributions
-Contributions welcome! Feel free to submit a PR
+Use nix :^)
