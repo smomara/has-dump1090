@@ -7,7 +7,7 @@ module ModeS
   ) where
 
 import Control.Monad (foldM)
-import qualified Data.ByteString as BS
+import Data.ByteString qualified as BS
 
 import ModeS.Decoder
 import ModeS.Demodulator

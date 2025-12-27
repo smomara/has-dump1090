@@ -1,77 +1,37 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Main where
 
-import Control.Concurrent.MVar
-import Control.Monad (foldM, forever, void, when)
-import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as Map
-import Data.Word (Word32)
-import Foreign.C.Types (CUChar)
-import Foreign.Ptr (Ptr, castPtr)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
+import Control.Monad (foldM)
+import Data.ByteString qualified as BS
+import Data.Map.Strict qualified as Map
 import Numeric (showHex)
-import RTLSDR
-import System.Exit (exitFailure)
 import Text.Printf (printf)
 
 import Aircraft
 import ModeS
+import Rtl
 
--- | RTL-SDR configuration constants
-sampleRate :: Word32
-sampleRate = 2000000 -- 2 MHz sample rate for Mode S
-
-centerFreq :: Word32
-centerFreq = 1090000000 -- 1090 MHz (Mode S frequency)
-
-bufferSize :: Int
-bufferSize = 16 * 16384 -- Same as previous code
-
-gainMode :: Bool
-gainMode = False -- Auto gain
-
--- | Initialize the RTL-SDR device
-initRTLSDR :: IO RTLSDR
-initRTLSDR = do
-  -- Get device count
-  count <- getDeviceCount
-  when (count == 0) $ do
-    putStrLn "No RTL-SDR devices found"
-    exitFailure
-
-  -- Try to open first device
-  open 0 >>= \case
-    Nothing -> do
-      putStrLn "Failed to open RTL-SDR device"
-      exitFailure
-    Just dev -> do
-      -- Configure device
-      void $ setSampleRate dev sampleRate
-      void $ setCenterFreq dev centerFreq
-      void $ setTunerGainMode dev gainMode
-
-      -- Print device info
-      name <- getDeviceName 0
-      gains <- getTunerGains dev
-      putStrLn $ "Opened RTL-SDR device: " ++ name
-      putStrLn $ "Available gains: " ++ show gains
-      putStrLn $ "Sample rate: " ++ show sampleRate
-      putStrLn $ "Center frequency: " ++ show centerFreq
-
-      -- Reset buffer before starting
-      void $ resetBuffer dev
-      return dev
+-- for this config, we have 262,144 / 2 = 131,072 samples per buffer
+-- "   "    "       "  "    131,072 / 2,000,000 = 65.54 ms per buffer
+-- With 15 buffers our total buffer is 15 * 65.54ms = 983ms, nearly 1 second
+config :: DeviceConfig
+config =
+  DeviceConfig
+    { sampleRate = 2_000_000 -- 2 MHz
+    , centerFreq = 1_090_000_000 -- 1090 MHz
+    , bufferSize = 262_144
+    , bufferNum = Just 15
+    , deviceIdx = 0
+    }
 
 -- | Process samples from the RTL-SDR
 processRTLSDRSamples
-  :: Ptr CUChar -> Int -> MVar (IcaoCache, AircraftState) -> IO ()
-processRTLSDRSamples ptr len stateMVar = do
-  -- Convert samples to ByteString
-  samples <- BS.packCStringLen (castPtr ptr, len)
-
-  -- Update state atomically
+  :: BS.ByteString -> MVar (IcaoCache, AircraftState) -> IO ()
+processRTLSDRSamples samples stateMVar =
   modifyMVar_ stateMVar $ \(cache, aircraftState) -> do
     -- Process the samples through Mode S decoder
     (messages, newCache) <- processModeSData samples cache
@@ -134,10 +94,6 @@ printAircraft Aircraft{..} = do
 main :: IO ()
 main = do
   putStrLn "Starting Mode S aircraft tracker..."
-
-  -- Initialize RTL-SDR
-  dev <- initRTLSDR
-
   -- Create initial states
   let initialCache = newIcaoCache icaoCacheLen icaoCacheTtl
   initialAircraft <- newAircraftState
@@ -146,8 +102,4 @@ main = do
   stateMVar <- newMVar (initialCache, initialAircraft)
 
   -- Start async reading with callback
-  void $ readAsync dev 0 (fromIntegral bufferSize) $ \ptr len ->
-    processRTLSDRSamples ptr len stateMVar
-
-  -- Wait forever (until Ctrl-C)
-  forever $ return ()
+  runConfig config $ \samples -> processRTLSDRSamples samples stateMVar

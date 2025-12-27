@@ -10,13 +10,13 @@ module Aircraft
   , newAircraftState
   ) where
 
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Word (Word32)
 
-import qualified Aircraft.CPR as CPR
-import qualified ModeS.Types as Mode
+import Aircraft.CPR qualified as CPR
+import ModeS.Types qualified as Mode
 
 -- | Main state for tracking all aircraft
 data AircraftState = AircraftState

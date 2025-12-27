@@ -9,9 +9,10 @@ module ModeS.Verifier
   ) where
 
 import Data.Bits
+import Data.Maybe (listToMaybe)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import qualified Data.Vector.Unboxed as V
-import qualified Data.Vector.Unboxed.Mutable as MV
+import Data.Vector.Unboxed qualified as V
+import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word32, Word8)
 
 import ModeS.Types
@@ -311,7 +312,7 @@ verifyPure msg = do
         ShortMessage -> 56
         LongMessage -> 112
 
-  df <- getDownlinkFormat (head bytes)
+  df <- getDownlinkFormat =<< listToMaybe bytes
   let computedCRC = calculateChecksum bytes numBits
       messageCRC = extractMessageCRC bytes numBits
       initialParity = computedCRC == messageCRC

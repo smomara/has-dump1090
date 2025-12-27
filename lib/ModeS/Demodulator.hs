@@ -5,9 +5,9 @@ module ModeS.Demodulator
   ) where
 
 import Data.Bits (shiftR)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BSU
-import qualified Data.Vector.Unboxed as V
+import Data.ByteString qualified as BS
+import Data.ByteString.Unsafe qualified as BSU
+import Data.Vector.Unboxed qualified as V
 import Data.Word (Word16, Word8)
 
 import ModeS.Types (Message (..), MessageLength (..))
@@ -85,17 +85,16 @@ demodulateInitialBits mags startPos numBits = go 0 []
   minDelta = 256 :: Word16
   go i acc
     | i >= numBits = Just (reverse acc)
-    | otherwise =
+    | otherwise = do
         let pos = startPos + (i * 2)
-            !low = mags V.! pos
-            !high = mags V.! (pos + 1)
-            !delta = abs (fromIntegral low - fromIntegral high)
-        in if low == high
-             then Nothing
-             else
-               if i > 0 && delta < minDelta
-                 then go (i + 1) (head acc : acc)
-                 else go (i + 1) ((low > high) : acc)
+        low <- mags V.!? pos
+        high <- mags V.!? (pos + 1)
+        let delta = abs (fromIntegral low - fromIntegral high)
+        if low == high
+          then Nothing
+          else case acc of
+            (x : _) | delta < minDelta -> go (i + 1) (x : acc)
+            _ -> go (i + 1) ((low > high) : acc)
 
 -- | Demodulate remaining bits after type determination
 demodulateRemainingBits
