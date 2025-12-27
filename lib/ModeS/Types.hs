@@ -8,6 +8,10 @@ import Data.Word
 data MessageLength = ShortMessage | LongMessage
   deriving (Show, Eq)
 
+fromMessageLength :: Num a => MessageLength -> a
+fromMessageLength ShortMessage = 56
+fromMessageLength LongMessage = 112
+
 -- | Raw demodulated message before any verification
 data Message = Message
   { msgLength :: !MessageLength
@@ -137,8 +141,8 @@ data AircraftIdentification = AircraftIdentification
   deriving (Show, Eq)
 
 -- | Common fields shared between downlink formats
-data CommonFields = CommonFields
-  { icaoAddress :: !Word32
+newtype CommonFields = CommonFields
+  { icaoAddress :: Word32
   }
   deriving (Show, Eq)
 

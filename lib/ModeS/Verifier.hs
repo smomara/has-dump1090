@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module ModeS.Verifier
   ( verify
@@ -195,10 +195,12 @@ getCurrentTimeSeconds :: IO Word32
 getCurrentTimeSeconds = round <$> getPOSIXTime
 
 -- Calculate checksum
-calculateChecksum :: [Word8] -> Int -> Word32
+calculateChecksum :: [Word8] -> MessageLength -> Word32
 calculateChecksum bytes bitLength =
-  let offset = if bitLength == 112 then 0 else (112 - 56)
-      indices = [0 .. bitLength - 1]
+  let offset = case bitLength of
+        LongMessage -> 0
+        ShortMessage -> 56
+      indices = [0 .. fromMessageLength bitLength - 1]
       folder :: Word32 -> Int -> Word32
       folder crc j =
         let byte = j `div` 8
@@ -213,9 +215,9 @@ calculateChecksum bytes bitLength =
   in foldl folder 0 indices
 
 -- | Extract message CRC from last three bytes
-extractMessageCRC :: [Word8] -> Int -> Word32
+extractMessageCRC :: [Word8] -> MessageLength -> Word32
 extractMessageCRC bytes bitLength =
-  let lastIndex = bitLength `div` 8 - 1
+  let lastIndex = fromMessageLength bitLength `div` 8 - 1
   in (fromIntegral (bytes !! (lastIndex - 2)) `shiftL` 16)
        .|. (fromIntegral (bytes !! (lastIndex - 1)) `shiftL` 8)
        .|. fromIntegral (bytes !! lastIndex)
@@ -245,11 +247,11 @@ icaoCacheHash a size =
   in fromIntegral $ a3 .&. (fromIntegral size - 1)
 
 -- | Try to fix single bit errors
-fixSingleBitErrors :: [Word8] -> Int -> Maybe (Int, [Word8])
-fixSingleBitErrors msg bits = go 0
+fixSingleBitErrors :: [Word8] -> MessageLength -> Maybe (Int, [Word8])
+fixSingleBitErrors msg ml = go 0
  where
   go j
-    | j >= bits = Nothing
+    | j >= fromMessageLength ml = Nothing
     | otherwise =
         let byteIndex = j `div` 8
             bitIndex = 7 - (j `mod` 8)
@@ -258,19 +260,19 @@ fixSingleBitErrors msg bits = go 0
               take byteIndex msg
                 ++ [(msg !! byteIndex) `xor` bitmask]
                 ++ drop (byteIndex + 1) msg
-            crc1 = extractMessageCRC modifiedMsg bits
-            crc2 = calculateChecksum modifiedMsg bits
+            crc1 = extractMessageCRC modifiedMsg ml
+            crc2 = calculateChecksum modifiedMsg ml
         in if crc1 == crc2
              then Just (j, modifiedMsg)
              else go (j + 1)
 
 -- | Fix two bit errors (only for DF17)
-fixTwoBitsErrors :: [Word8] -> Int -> Maybe ([Int], [Word8])
-fixTwoBitsErrors msg bits = go 0 0
+fixTwoBitsErrors :: [Word8] -> MessageLength -> Maybe ([Int], [Word8])
+fixTwoBitsErrors msg ml = go 0 0
  where
   go i j
-    | i >= bits = Nothing
-    | j >= bits = go (i + 1) (i + 2)
+    | i >= fromMessageLength ml = Nothing
+    | j >= fromMessageLength ml = go (i + 1) (i + 2)
     | i == j = go i (j + 1)
     | otherwise =
         let (byteIndex1, bitIndex1) = (i `div` 8, 7 - (i `mod` 8))
@@ -296,8 +298,8 @@ fixTwoBitsErrors msg bits = go 0 0
                           ++ drop (byteIndex2 + 1) msg1
                   in msg2
 
-            crc1 = extractMessageCRC modifiedMsg bits
-            crc2 = calculateChecksum modifiedMsg bits
+            crc1 = extractMessageCRC modifiedMsg ml
+            crc2 = calculateChecksum modifiedMsg ml
         in if crc1 == crc2
              then Just ([i, j], modifiedMsg)
              else go i (j + 1)
@@ -306,31 +308,27 @@ fixTwoBitsErrors msg bits = go 0 0
 
 -- | Pure decoding function without cache operations
 verifyPure :: Message -> Maybe VerifiedMessage
-verifyPure msg = do
-  let bytes = bitsToBytes (msgBits msg)
-      numBits = case msgLength msg of
-        ShortMessage -> 56
-        LongMessage -> 112
+verifyPure Message{..} = do
+  let bytes = bitsToBytes msgBits
 
   df <- getDownlinkFormat =<< listToMaybe bytes
-  let computedCRC = calculateChecksum bytes numBits
-      messageCRC = extractMessageCRC bytes numBits
+  let computedCRC = calculateChecksum bytes msgLength
+      messageCRC = extractMessageCRC bytes msgLength
       initialParity = computedCRC == messageCRC
 
       -- Try error correction for DF11/17 if needed
       (_, correctedBytes, correctedParity) =
         if not initialParity
           && (df == DFAllCallReply || df == DFExtendedSquitter)
-          then case fixSingleBitErrors bytes numBits of
+          then case fixSingleBitErrors bytes msgLength of
             Just (bitPos, fixed) -> ([bitPos], fixed, True)
             Nothing ->
               if df == DFExtendedSquitter
-                then case fixTwoBitsErrors bytes numBits of
+                then case fixTwoBitsErrors bytes msgLength of
                   Just (bits', fixed) -> (bits', fixed, True)
                   Nothing -> ([], bytes, initialParity)
                 else ([], bytes, initialParity)
           else ([], bytes, initialParity)
-
   return
     VerifiedMessage
       { verifiedDF = df
@@ -363,15 +361,12 @@ updateCache msg cache =
 
 -- | Try to recover ICAO address using cache
 recoverAddress :: Message -> VerifiedMessage -> IcaoCache -> IO (Maybe Word32)
-recoverAddress msg dm cache =
+recoverAddress Message{msgLength} dm cache =
   if dfRequiresBruteForce (verifiedDF dm)
     then do
       let bytes = verifiedPayload dm
-          numBits = case msgLength msg of
-            ShortMessage -> 56
-            LongMessage -> 112
-          lastByte = (numBits `div` 8) - 1
-          crc = calculateChecksum bytes numBits
+          lastByte = (fromMessageLength msgLength `div` 8) - 1
+          crc = calculateChecksum bytes msgLength
           recoveredAddr =
             (fromIntegral (bytes !! (lastByte - 2)) `xor` ((crc `shiftR` 16) .&. 0xff))
               `shiftL` 16
