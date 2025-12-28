@@ -8,6 +8,7 @@ module ModeS.Demodulator
 import Data.Bits (shiftR)
 import Data.Complex (Complex (..))
 import Data.Complex qualified as Complex
+import Data.Maybe
 import Data.Vector.Storable qualified as VS
 import Data.Word (Word16, Word8)
 
@@ -34,39 +35,37 @@ computeMagnitude =
 
 -- | Check if magnitudes at position form a valid preamble
 detectPreamble :: VS.Vector Word16 -> Int -> Bool
-detectPreamble mags pos
-  | pos + 14 >= VS.length mags = False
-  | otherwise =
-      let
-        (!mag0, !mag1, !mag2, !mag3) =
-          (mags VS.! pos, mags VS.! (pos + 1), mags VS.! (pos + 2), mags VS.! (pos + 3))
-        (!mag4, !mag5, !mag6, !mag7) =
-          ( mags VS.! (pos + 4)
-          , mags VS.! (pos + 5)
-          , mags VS.! (pos + 6)
-          , mags VS.! (pos + 7)
-          )
-        (!mag8, !mag9) = (mags VS.! (pos + 8), mags VS.! (pos + 9))
-
-        !threshold = (fromIntegral (mag0 + mag2 + mag7 + mag9) :: Int) `div` 6
-
-        patternCheck =
-          mag0 > mag1
-            && mag1 < mag2
-            && mag2 > mag3
-            && mag3 < mag0
-            && mag4 < mag0
-            && mag5 < mag0
-            && mag6 < mag0
-            && mag7 > mag8
-            && mag8 < mag9
-            && mag9 > mag6
-
-        spikeCheck = fromIntegral mag4 < threshold && fromIntegral mag5 < threshold
-
-        spaceCheck = all (< threshold) $ map (fromIntegral . (mags VS.!)) [pos + 11 .. pos + 14]
-      in
-        patternCheck && spikeCheck && spaceCheck
+detectPreamble mags pos = fromMaybe False $ do
+  -- TODO: slice to sized vector for safe indexing instead?
+  m0 <- idx 0
+  m1 <- idx 1
+  m2 <- idx 2
+  m3 <- idx 3
+  m4 <- idx 4
+  m5 <- idx 5
+  m6 <- idx 6
+  m7 <- idx 7
+  m8 <- idx 8
+  m9 <- idx 9
+  rest <- mapM idx [11 .. 14]
+  pure
+    $ let threshold = fromIntegral @Word16 @Integer (m0 + m2 + m7 + m9) `div` 6
+          spikeCheck = fromIntegral m4 < threshold && fromIntegral m5 < threshold
+          spaceCheck = all ((< threshold) . fromIntegral) rest
+          patternCheck =
+            m0 > m1
+              && m1 < m2
+              && m2 > m3
+              && m3 < m0
+              && m4 < m0
+              && m5 < m0
+              && m6 < m0
+              && m7 > m8
+              && m8 < m9
+              && m9 > m6
+      in patternCheck && spikeCheck && spaceCheck
+ where
+  idx i = mags VS.!? (pos + i)
 
 -- | Determine message length from first byte (DF field)
 determineMessageLength :: [Bool] -> Maybe MessageLength
