@@ -7,6 +7,7 @@ module Main where
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Monad (foldM)
 import Data.Map.Strict qualified as Map
+import Data.Maybe
 import Numeric (showHex)
 import Text.Printf (printf)
 
@@ -70,7 +71,7 @@ printAircraftStatus AircraftState{aircraft} = do
 printAircraft :: Aircraft -> IO ()
 printAircraft Aircraft{..} = do
   let hex = showHex icaoAddress ""
-      ident = maybe "unknown" id callsign
+      cs = fromMaybe "unknown" callsign
       pos = maybe "unknown" formatPos position
       alt = maybe "unknown" (\a -> show a ++ " ft") altitudeFt
       spd = maybe "unknown" (\s -> show s ++ " kt") groundSpeed
@@ -81,7 +82,7 @@ printAircraft Aircraft{..} = do
     $ printf
       "%-8s | %-8s | %-20s | %-10s | %-10s | %-10s | %-15s"
       hex
-      ident
+      cs
       pos
       alt
       spd

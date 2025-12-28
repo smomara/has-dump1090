@@ -20,7 +20,7 @@ import Data.Word (Word32, Word8)
 import Foreign.ForeignPtr (castForeignPtr)
 import Foreign.Ptr (castPtr)
 import RTLSDR (RTLSDR)
-import RTLSDR qualified as RTLSDR
+import RTLSDR qualified
 
 newtype Device = Device RTLSDR
 
@@ -78,7 +78,7 @@ runConfig DeviceConfig{..} f = withDevice deviceIdx $ \(Device dev) -> do
 
   _ <- RTLSDR.readAsync dev (fromMaybe 0 bufferNum) bufferSize
     $ \ptr len ->
-      f =<< IQ . toIQ <$> BS.packCStringLen (castPtr ptr, len)
+      f . IQ . toIQ =<< BS.packCStringLen (castPtr ptr, len)
 
   forever $ pure ()
 
