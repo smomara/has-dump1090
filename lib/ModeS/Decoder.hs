@@ -3,6 +3,7 @@ module ModeS.Decoder where
 import Data.Bits
 import Data.Char (chr)
 import Data.Word
+import Data.Maybe
 
 import ModeS.Types
 
@@ -115,11 +116,7 @@ decodeIdentityField payload =
 decodeSpecificFields :: VerifiedMessage -> Maybe MessageSpecific
 decodeSpecificFields msg@VerifiedMessage{verifiedDF = df, verifiedPayload = payload} =
   case df of
-    DFAllCallReply ->
-      let ca = payload !! 0 .&. 0x07
-      in Just $ DF11Fields $ case fromCA ca of
-           Just cap -> cap
-           Nothing -> Level7
+    DFAllCallReply -> (fmap DF11Fields . fromCA) . (.&. 0x07) =<< listToMaybe payload
     DFSurveillanceAlt -> decodeDF45Fields msg
     DFSurveillanceId -> decodeDF45Fields msg
     DFCommAAltRequest -> decodeDF45Fields msg
@@ -168,9 +165,7 @@ decodeDF45Fields VerifiedMessage{verifiedDF = dfType, verifiedPayload = payload}
   let fs = payload !! 0 .&. 0x07 -- Flight status
       dr = (payload !! 1 `shiftR` 3) .&. 0x1F -- Downlink request
       um = decodeUM payload -- Utility message
-      status = case fromFS fs of
-        Just s -> s
-        Nothing -> NormalAirborne -- Default to normal airborne
+      status = fromMaybe NormalAirborne $ fromFS fs
   in case dfType of
        -- DF4/20: Altitude reply
        df
@@ -401,10 +396,7 @@ decodeGroundVelocity msg =
     heading =
       if speed > 0
         then
-          let h =
-                (atan2 ewVelSigned nsVelSigned)
-                  * 360.0
-                  / (2.0 * pi)
+          let h = atan2 ewVelSigned nsVelSigned * 360.0 / (2.0 * pi)
           in if h < 0 then h + 360 else h
         else 0
 

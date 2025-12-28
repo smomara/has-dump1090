@@ -1,5 +1,5 @@
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Aircraft
   ( Aircraft (..)
@@ -244,7 +244,7 @@ updateAircraftFields ac msg now =
           ( Mode.DF17Fields
               { Mode.esType = Mode.SurfacePos
               , Mode.esData =
-                Mode.ESSurfacePos Mode.SurfacePosition{surfacePosition, surfaceMovement}
+                Mode.ESSurfacePos Mode.SurfacePosition{..}
               }
             ) ->
             let currentTime = floor (now * 1000)

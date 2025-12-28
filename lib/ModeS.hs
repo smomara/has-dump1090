@@ -7,18 +7,18 @@ module ModeS
   ) where
 
 import Control.Monad (foldM)
-import Data.ByteString qualified as BS
 
 import ModeS.Decoder
 import ModeS.Demodulator
 import ModeS.Types
 import ModeS.Verifier
+import Rtl
 
 {- | Process Mode S data, handling demodulation, verification, and decoding
 Returns a list of successfully decoded messages and the updated ICAO cache
 -}
 processModeSData
-  :: BS.ByteString -> IcaoCache -> IO ([DecodedMessage], IcaoCache)
+  :: IQ -> IcaoCache -> IO ([DecodedMessage], IcaoCache)
 processModeSData input cache = do
   -- Demod raw data into messages
   let messages = process input
