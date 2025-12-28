@@ -6,13 +6,18 @@ module Rtl
   , DeviceConfig (..)
   , totalBuffer
   , runConfig
+  , IQ (unIQ)
   ) where
 
 import Control.Exception (bracket)
 import Control.Monad (forever, when)
-import Data.ByteString (ByteString, packCStringLen)
+import Data.ByteString qualified as BS
+import Data.ByteString.Internal qualified as BSI
+import Data.Complex (Complex)
 import Data.Maybe (fromMaybe)
-import Data.Word (Word32)
+import Data.Vector.Storable qualified as Storable
+import Data.Word (Word32, Word8)
+import Foreign.ForeignPtr (castForeignPtr)
 import Foreign.Ptr (castPtr)
 import RTLSDR (RTLSDR)
 import RTLSDR qualified as RTLSDR
@@ -63,13 +68,21 @@ closeDevice (Device d) = RTLSDR.close d
 withDevice :: Word32 -> (Device -> IO a) -> IO a
 withDevice n = bracket (makeDevice n) closeDevice
 
-runConfig :: DeviceConfig -> (ByteString -> IO ()) -> IO a
+newtype IQ = IQ {unIQ :: Storable.Vector (Complex Word8)}
+
+runConfig :: DeviceConfig -> (IQ -> IO ()) -> IO a
 runConfig DeviceConfig{..} f = withDevice deviceIdx $ \(Device dev) -> do
   _ <- RTLSDR.setSampleRate dev sampleRate
   _ <- RTLSDR.setCenterFreq dev centerFreq
   _ <- RTLSDR.setTunerGainMode dev False
 
   _ <- RTLSDR.readAsync dev (fromMaybe 0 bufferNum) bufferSize
-    $ \ptr len -> f =<< packCStringLen (castPtr ptr, len)
+    $ \ptr len ->
+      f =<< IQ . toIQ <$> BS.packCStringLen (castPtr ptr, len)
 
   forever $ pure ()
+
+toIQ :: BS.ByteString -> Storable.Vector (Complex Word8)
+toIQ bs =
+  let (fp, _, len) = BSI.toForeignPtr bs
+  in Storable.unsafeFromForeignPtr0 (castForeignPtr fp) (len `div` 2)

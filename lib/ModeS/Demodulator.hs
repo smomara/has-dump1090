@@ -6,15 +6,13 @@ module ModeS.Demodulator
   ) where
 
 import Data.Bits (shiftR)
-import Data.ByteString qualified as BS
-import Data.ByteString.Internal qualified as BSI
 import Data.Complex (Complex (..))
 import Data.Complex qualified as Complex
 import Data.Vector.Storable qualified as VS
 import Data.Word (Word16, Word8)
-import Foreign.ForeignPtr (castForeignPtr)
 
 import ModeS.Types (Message (..), MessageLength (..), fromMessageLength)
+import Rtl (IQ (..))
 
 -- | Constants
 preambleSamples :: Int
@@ -24,13 +22,8 @@ totalMessageSamples :: Int
 totalMessageSamples = fromMessageLength LongMessage + preambleSamples
 
 -- | Convert raw I/Q samples into magnitude vector
-computeMagnitudeVector :: BS.ByteString -> VS.Vector Word16
-computeMagnitudeVector = VS.map computeMagnitude . toIQ
-
-toIQ :: BS.ByteString -> VS.Vector (Complex Word8)
-toIQ bs =
-  let (fp, _, len) = BSI.toForeignPtr bs
-  in VS.unsafeFromForeignPtr0 (castForeignPtr fp) (len `div` 2)
+computeMagnitudeVector :: IQ -> VS.Vector Word16
+computeMagnitudeVector = VS.map computeMagnitude . unIQ
 
 computeMagnitude :: Complex Word8 -> Word16
 computeMagnitude =
@@ -189,5 +182,5 @@ detectMessages mags = go 0 []
           else go (pos + 1) acc
 
 -- | Main processing function
-process :: BS.ByteString -> [Message]
+process :: IQ -> [Message]
 process = detectMessages . computeMagnitudeVector

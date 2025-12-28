@@ -6,7 +6,6 @@ module Main where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Monad (foldM)
-import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
 import Numeric (showHex)
 import Text.Printf (printf)
@@ -30,7 +29,7 @@ config =
 
 -- | Process samples from the RTL-SDR
 processRTLSDRSamples
-  :: BS.ByteString -> MVar (IcaoCache, AircraftState) -> IO ()
+  :: IQ -> MVar (IcaoCache, AircraftState) -> IO ()
 processRTLSDRSamples samples stateMVar =
   modifyMVar_ stateMVar $ \(cache, aircraftState) -> do
     -- Process the samples through Mode S decoder
