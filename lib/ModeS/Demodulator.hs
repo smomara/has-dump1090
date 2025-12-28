@@ -2,13 +2,17 @@
 
 module ModeS.Demodulator
   ( process
+  , computeMagnitudeVector
   ) where
 
 import Data.Bits (shiftR)
 import Data.ByteString qualified as BS
-import Data.ByteString.Unsafe qualified as BSU
-import Data.Vector.Unboxed qualified as V
+import Data.ByteString.Internal qualified as BSI
+import Data.Complex (Complex (..))
+import Data.Complex qualified as Complex
+import Data.Vector.Storable qualified as VS
 import Data.Word (Word16, Word8)
+import Foreign.ForeignPtr (castForeignPtr)
 
 import ModeS.Types (Message (..), MessageLength (..), fromMessageLength)
 
@@ -20,26 +24,36 @@ totalMessageSamples :: Int
 totalMessageSamples = fromMessageLength LongMessage + preambleSamples
 
 -- | Convert raw I/Q samples into magnitude vector
-computeMagnitudeVector :: BS.ByteString -> V.Vector Word16
-computeMagnitudeVector bs = V.generate numSamples getMagnitude
- where
-  numSamples = BS.length bs `div` 2
-  getMagnitude idx =
-    let i = fromIntegral (BSU.unsafeIndex bs (idx * 2)) - 127 :: Int
-        q = fromIntegral (BSU.unsafeIndex bs (idx * 2 + 1)) - 127 :: Int
-        magnitude = sqrt (fromIntegral (i * i + q * q) :: Double)
-    in round (magnitude * 360)
+computeMagnitudeVector :: BS.ByteString -> VS.Vector Word16
+computeMagnitudeVector = VS.map computeMagnitude . toIQ
+
+toIQ :: BS.ByteString -> VS.Vector (Complex Word8)
+toIQ bs =
+  let (fp, _, len) = BSI.toForeignPtr bs
+  in VS.unsafeFromForeignPtr0 (castForeignPtr fp) (len `div` 2)
+
+computeMagnitude :: Complex Word8 -> Word16
+computeMagnitude =
+  round
+    . (* 360)
+    . Complex.magnitude
+    . fmap (subtract 127 . fromIntegral @Word8 @Double)
 
 -- | Check if magnitudes at position form a valid preamble
-detectPreamble :: V.Vector Word16 -> Int -> Bool
+detectPreamble :: VS.Vector Word16 -> Int -> Bool
 detectPreamble mags pos
-  | pos + 14 >= V.length mags = False
+  | pos + 14 >= VS.length mags = False
   | otherwise =
       let
-        (!mag0, !mag1, !mag2, !mag3) = (mags V.! pos, mags V.! (pos + 1), mags V.! (pos + 2), mags V.! (pos + 3))
+        (!mag0, !mag1, !mag2, !mag3) =
+          (mags VS.! pos, mags VS.! (pos + 1), mags VS.! (pos + 2), mags VS.! (pos + 3))
         (!mag4, !mag5, !mag6, !mag7) =
-          (mags V.! (pos + 4), mags V.! (pos + 5), mags V.! (pos + 6), mags V.! (pos + 7))
-        (!mag8, !mag9) = (mags V.! (pos + 8), mags V.! (pos + 9))
+          ( mags VS.! (pos + 4)
+          , mags VS.! (pos + 5)
+          , mags VS.! (pos + 6)
+          , mags VS.! (pos + 7)
+          )
+        (!mag8, !mag9) = (mags VS.! (pos + 8), mags VS.! (pos + 9))
 
         !threshold = (fromIntegral (mag0 + mag2 + mag7 + mag9) :: Int) `div` 6
 
@@ -57,7 +71,7 @@ detectPreamble mags pos
 
         spikeCheck = fromIntegral mag4 < threshold && fromIntegral mag5 < threshold
 
-        spaceCheck = all (< threshold) $ map (fromIntegral . (mags V.!)) [pos + 11 .. pos + 14]
+        spaceCheck = all (< threshold) $ map (fromIntegral . (mags VS.!)) [pos + 11 .. pos + 14]
       in
         patternCheck && spikeCheck && spaceCheck
 
@@ -76,7 +90,7 @@ determineMessageLength bits =
             else LongMessage
 
 -- | Demodulate initial bits to determine message type
-demodulateInitialBits :: V.Vector Word16 -> Int -> Int -> Maybe [Bool]
+demodulateInitialBits :: VS.Vector Word16 -> Int -> Int -> Maybe [Bool]
 demodulateInitialBits mags startPos numBits = go 0 []
  where
   minDelta = 256 :: Word16
@@ -84,8 +98,8 @@ demodulateInitialBits mags startPos numBits = go 0 []
     | i >= numBits = Just (reverse acc)
     | otherwise = do
         let pos = startPos + (i * 2)
-        low <- mags V.!? pos
-        high <- mags V.!? (pos + 1)
+        low <- mags VS.!? pos
+        high <- mags VS.!? (pos + 1)
         let delta = abs (fromIntegral low - fromIntegral high)
         if low == high
           then Nothing
@@ -95,7 +109,7 @@ demodulateInitialBits mags startPos numBits = go 0 []
 
 -- | Demodulate remaining bits after type determination
 demodulateRemainingBits
-  :: V.Vector Word16 -> Int -> Int -> [Bool] -> Maybe [Bool]
+  :: VS.Vector Word16 -> Int -> Int -> [Bool] -> Maybe [Bool]
 demodulateRemainingBits mags startPos totalBits initialBits = go (length initialBits) initialBits
  where
   minDelta = 256 :: Word16
@@ -103,8 +117,8 @@ demodulateRemainingBits mags startPos totalBits initialBits = go (length initial
     | i >= totalBits = Just acc
     | otherwise =
         let pos = startPos + (i * 2)
-            !low = mags V.! pos
-            !high = mags V.! (pos + 1)
+            !low = mags VS.! pos
+            !high = mags VS.! (pos + 1)
             !delta = abs (fromIntegral low - fromIntegral high)
         in if low == high
              then Nothing
@@ -114,13 +128,13 @@ demodulateRemainingBits mags startPos totalBits initialBits = go (length initial
                  else go (i + 1) (acc ++ [low > high])
 
 -- | Demodulate bits from magnitude samples with length detection
-demodulateMessage :: V.Vector Word16 -> Int -> Maybe Message
+demodulateMessage :: VS.Vector Word16 -> Int -> Maybe Message
 demodulateMessage mags startPos = do
   initialBits <- demodulateInitialBits mags startPos 8
   msgLenType <- determineMessageLength initialBits
 
   let requiredBits = fromMessageLength msgLenType
-  if startPos + (requiredBits * 2) > V.length mags
+  if startPos + (requiredBits * 2) > VS.length mags
     then Nothing
     else do
       fullBits <- demodulateRemainingBits mags startPos requiredBits initialBits
@@ -135,14 +149,14 @@ demodulateMessage mags startPos = do
               }
 
 -- | Helper to calculate average delta across magnitude samples
-calcAverageDelta :: V.Vector Word16 -> Int -> MessageLength -> Double
+calcAverageDelta :: VS.Vector Word16 -> Int -> MessageLength -> Double
 calcAverageDelta mags start msgLenType =
   let msglen = fromMessageLength msgLenType `div` 8
       !delta =
         sum
           [ abs
-              ( fromIntegral (mags V.! (start + i))
-                  - fromIntegral (mags V.! (start + i + 1))
+              ( fromIntegral (mags VS.! (start + i))
+                  - fromIntegral (mags VS.! (start + i + 1))
                   :: Int
               )
           | i <- [0, 2 .. msglen * 8 * 2 - 1]
@@ -160,11 +174,11 @@ bitsToWord8 bits =
   in sum bitValues
 
 -- | Find all valid messages in a magnitude vector
-detectMessages :: V.Vector Word16 -> [Message]
+detectMessages :: VS.Vector Word16 -> [Message]
 detectMessages mags = go 0 []
  where
   go pos acc
-    | pos + totalMessageSamples >= V.length mags = reverse acc
+    | pos + totalMessageSamples >= VS.length mags = reverse acc
     | otherwise =
         if detectPreamble mags pos
           then case demodulateMessage mags (pos + preambleSamples * 2) of
